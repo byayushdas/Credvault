@@ -1,0 +1,27 @@
+Target Market in India
+
+FPOs and cooperatives: 10,000+ registered in India, need traceability for exports.
+
+Export-oriented crops: Spices, tea, coffee, rice, organic produce → where authenticity matters.
+
+Retail chains & e-commerce: BigBasket, Reliance Fresh, DMart, Amazon Fresh want “verified” suppliers.
+
+Government: Public Distribution System (PDS) and MSP procurement transparency.
+
+
+
+Revenue Streams
+
+Subscription Model: Farmers, processors, and retailers pay a monthly fee for traceability access.
+
+Certification Fees: “Blockchain Verified” badges for exporters/brands.
+
+Transaction Fees: Small charge per recorded transaction on blockchain.
+
+Enterprise Solutions: Custom deployments for big agri-companies and state governments.
+
+
+Cost for implementation, what if all stakeholders exploit then solution, training for using the Dapp, stats for farmers in india ,etc.
+
+
+Subscription: for showing price to each stakeholder.
