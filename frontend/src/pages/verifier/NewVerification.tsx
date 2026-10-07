@@ -10,6 +10,8 @@ import {
   useAction,
   ErrorBox,
 } from "../../components/common/UI";
+import { QrScanner } from "../../components/common/QrScanner";
+import type { VaultScanResult } from "../../components/common/QrScanner";
 interface Match {
   id: string;
   issuer: string;
@@ -24,50 +26,69 @@ export default function NewVerification() {
     action = useAction();
   const [step, setStep] = useState(1),
     [owner, setOwner] = useState(""),
+    [shareToken, setShareToken] = useState<string | null>(null),
+    [targetVault, setTargetVault] = useState<{ vault_id: string; masked_name: string } | null>(null),
+    [isScanning, setIsScanning] = useState(false),
+    [scanError, setScanError] = useState(""),
     [type, setType] = useState("GENERAL"),
-    [matches, setMatches] = useState<Match[]>([]),
-    [credential, setCredential] = useState(""),
     [fields, setFields] = useState<string[]>([]),
     [purpose, setPurpose] = useState(""),
     [hours, setHours] = useState(24),
-    [searched, setSearched] = useState(false),
     [key] = useState(() => crypto.randomUUID());
   async function next() {
     if (step === 1) {
       if (!/^[0-9a-f-]{36}$/i.test(owner)) return;
       await action.run(async () => {
-        await api("/owners/confirm?vault_id=" + encodeURIComponent(owner));
+        const confirmRes = await api<{ vault_id: string; masked_name: string }>(
+          "/owners/confirm?vault_id=" + encodeURIComponent(owner)
+        );
+        setTargetVault(confirmRes);
+        setOwner(confirmRes.vault_id);
         setStep(2);
       }, "Owner vault confirmed");
-    } else if (step === 2) {
-      if (credential) setStep(3);
-    } else if (step === 3 && fields.length && purpose.trim().length >= 8)
-      setStep(4);
+    } else if (step === 2 && fields.length && purpose.trim().length >= 8) {
+      setStep(3);
+    }
   }
-  async function discover() {
-    await action.run(async () => {
-      const rows = await api<Match[]>(
-        "/verification/discover?owner_id=" +
-          encodeURIComponent(owner) +
-          "&credential_type=" +
-          type,
-      );
-      setMatches(rows);
-      setCredential("");
-      setSearched(true);
-    }, "");
-  }
+
+  const handleScan = async (res: VaultScanResult) => {
+    try {
+      setScanError("");
+      let confirmRes;
+      if (res.source === "QR_SHARE" && res.token) {
+        confirmRes = await api<{ vault_id: string; masked_name: string, token: string }>(
+          "/owners/confirm-share?token=" + encodeURIComponent(res.token)
+        );
+        setShareToken(confirmRes.token);
+      } else if (res.vault_id) {
+        confirmRes = await api<{ vault_id: string; masked_name: string }>(
+          "/owners/confirm?vault_id=" + encodeURIComponent(res.vault_id)
+        );
+        setShareToken(null);
+      } else {
+        throw new Error("Invalid scan result");
+      }
+      setTargetVault(confirmRes);
+      setOwner(confirmRes.vault_id);
+      setIsScanning(false);
+      setStep(2);
+    } catch (e: any) {
+      setScanError(e.message || "Failed to confirm vault");
+    }
+  };
+
   async function submit() {
     await action.run(async () => {
       const r = await api<RequestItem>(
-        "/verification/requests",
+        "/verification/requests/from-vault",
         "POST",
         {
-          owner_id: owner,
-          credential_id: credential,
+          vault_id: owner,
+          credential_type: type,
           fields,
           purpose,
           lifetime_hours: hours,
+          share_token: shareToken
         },
         key,
       );
@@ -83,7 +104,6 @@ export default function NewVerification() {
       <ol className="stepper">
         {[
           "Identify owner",
-          "Choose credential",
           "Select fields",
           "Review and submit",
         ].map((s, i) => (
@@ -100,41 +120,63 @@ export default function NewVerification() {
       <section className="card form-card">
         <ErrorBox message={schemas.error} retry={schemas.reload} />
         {action.feedback}
-        <Form onSubmit={() => (step === 4 ? void submit() : void next())}>
+        <Form onSubmit={() => (step === 3 ? void submit() : void next())}>
           {step === 1 && (
             <>
               <h2>Identify the owner</h2>
               <p>
-                Ask the owner to share the exact vault ID from their dashboard.
-                Private profiles are not searchable.
+                Ask the owner to share their Vault QR or enter their exact vault ID.
               </p>
-              <Field label="Owner vault ID">
-                <input
-                  required
-                  pattern="[0-9a-fA-F-]{36}"
-                  value={owner}
-                  onChange={(e) => {
-                    setOwner(e.target.value.trim());
-                    setCredential("");
-                    setSearched(false);
-                  }}
-                  placeholder="00000000-0000-0000-0000-000000000000"
-                />
-              </Field>
+              
+              {!isScanning ? (
+                <div className="card" style={{ padding: "1.5rem", background: "var(--bg-card-alt)", borderRadius: "var(--radius)", marginBottom: "1rem" }}>
+                  <h3 style={{ marginTop: 0 }}>Target Vault</h3>
+                  <p style={{ color: "var(--text-muted)", marginBottom: "1rem" }}>Identify the owner vault to verify.</p>
+                  
+                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                    <input 
+                      placeholder="Enter Vault ID (CV-...)" 
+                      value={owner}
+                      onChange={(e) => setOwner(e.target.value.trim())}
+                      style={{ flex: 1 }}
+                      required
+                    />
+                  </div>
+                  
+                  <div style={{ textAlign: "center", margin: "1rem 0", color: "var(--text-muted)", fontSize: "0.9rem" }}>OR</div>
+                  
+                  <button type="button" className="secondary" onClick={() => setIsScanning(true)} style={{ width: "100%" }}>
+                    Scan Owner QR
+                  </button>
+                </div>
+              ) : (
+                <div className="scanner-container card" style={{ marginBottom: "1rem" }}>
+                  <QrScanner
+                    onScan={handleScan}
+                    onCancel={() => { setIsScanning(false); setScanError(""); }}
+                  />
+                  {scanError && <p className="error" style={{ color: "red", marginTop: "1rem" }}>{scanError}</p>}
+                </div>
+              )}
             </>
           )}
           {step === 2 && (
             <>
-              <h2>Choose credential type</h2>
+              <h2>Select fields and purpose</h2>
+              {targetVault && (
+                <div className="target-vault-info card" style={{ marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-card-alt)", borderRadius: "var(--radius)" }}>
+                  <h3 style={{ marginTop: 0 }}>Target Vault</h3>
+                  <p className="monospace" style={{ margin: "0.5rem 0" }}>{targetVault.vault_id}</p>
+                  <p style={{ margin: "0.5rem 0" }}>Owner: <strong>{targetVault.masked_name}</strong></p>
+                </div>
+              )}
+              
               <Field label="Credential type">
                 <select
                   value={type}
                   onChange={(e) => {
                     setType(e.target.value);
-                    setCredential("");
                     setFields([]);
-                    setMatches([]);
-                    setSearched(false);
                   }}
                 >
                   {Object.entries(schemas.data || {}).map(([k, s]) => (
@@ -144,53 +186,10 @@ export default function NewVerification() {
                   ))}
                 </select>
               </Field>
-              <button
-                className="secondary"
-                type="button"
-                disabled={action.busy}
-                onClick={() => void discover()}
-              >
-                Find eligible credentials
-              </button>
-              {searched && !matches.length && (
-                <p>
-                  No valid credentials of this type are available for this
-                  reference.
-                </p>
-              )}
-              {matches.length > 0 && (
-                <Field label="Select credential reference">
-                  <select
-                    required
-                    value={credential}
-                    onChange={(e) => setCredential(e.target.value)}
-                  >
-                    <option value="">Choose explicitly…</option>
-                    {matches.map((m) => (
-                      <option value={m.id} key={m.id}>
-                        {m.issuer} · {m.issued_at.slice(0, 10)} ·{" "}
-                        {m.id.slice(0, 8)} · v{m.version}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              )}
-              <p className="muted">
-                This step exposes issuer, reference and issue date only.
-              </p>
-            </>
-          )}
-          {step === 3 && (
-            <>
-              <h2>Select fields and purpose</h2>
+
               <fieldset>
                 <legend>Requested fields (at least one)</legend>
                 {Object.entries(schemas.data?.[type]?.fields || {})
-                  .filter(([name]) =>
-                    matches
-                      .find((match) => match.id === credential)
-                      ?.fields.includes(name),
-                  )
                   .map(([k, s]) => (
                     <label className="checkbox" key={k}>
                       <input
@@ -231,7 +230,7 @@ export default function NewVerification() {
               </Field>
             </>
           )}
-          {step === 4 && (
+          {step === 3 && (
             <>
               <h2>Review your request</h2>
               <dl className="claim-list">
@@ -240,20 +239,16 @@ export default function NewVerification() {
                   <dd>{user!.organization?.name}</dd>
                 </div>
                 <div>
-                  <dt>Owner</dt>
+                  <dt>Target Vault</dt>
                   <dd>
                     <code>{owner}</code>
+                    <br/>
+                    <small>Owner: {targetVault?.masked_name}</small>
                   </dd>
                 </div>
                 <div>
                   <dt>Credential type</dt>
                   <dd>{schemas.data?.[type]?.label}</dd>
-                </div>
-                <div>
-                  <dt>Reference</dt>
-                  <dd>
-                    <code>{credential}</code>
-                  </dd>
                 </div>
                 <div>
                   <dt>Fields</dt>
@@ -291,13 +286,12 @@ export default function NewVerification() {
               className="primary"
               disabled={
                 action.busy ||
-                (step === 2 && !credential) ||
-                (step === 3 && (!fields.length || purpose.trim().length < 8))
+                (step === 2 && (!fields.length || purpose.trim().length < 8))
               }
             >
               {action.busy
                 ? "Submitting…"
-                : step === 4
+                : step === 3
                   ? "Submit request"
                   : "Next"}
             </button>

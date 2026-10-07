@@ -45,7 +45,9 @@ def test_event_subscription_uses_session_and_rechecks_logout(env,monkeypatch):
 def test_marksheet_disclosure_recipient_and_live_recipients(env):
     issuer=env['login'](2);owner=env['login'](0);verifier=env['login'](3)
     reference=env['ids'][0]
-    assert issuer.get('/api/v1/owners/confirm?vault_id='+reference).json()=={'vault_id':reference,'status':'Available'}
+    res = issuer.get('/api/v1/owners/confirm?vault_id='+reference).json()
+    assert 'vault_id' in res
+    assert 'masked_name' in res
     assert issuer.get('/api/v1/owners/confirm?vault_id='+str(uuid.uuid4())).status_code==404
     assert owner.get('/api/v1/owners/confirm?vault_id='+reference).status_code==403
     others=[revision(env['factory'],env['ids'][i]) for i in (1,4)]

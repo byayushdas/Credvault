@@ -69,7 +69,14 @@ if (mode === "setup") {
   const localConfig = fs.readFileSync(path.join(backend, ".env"), "utf8");
   if (localConfig.includes("@127.0.0.1:55432/credvault"))
     run(process.execPath, [path.join(root, "scripts/grants.mjs")]);
-} else if (mode === "seed") run(python, ["-m", "scripts.seed_demo"], backend);
+} else if (mode === "seed") {
+  if (process.env.ALLOW_DEMO_SEED === 'true') {
+    run(python, ["-m", "scripts.seed_demo"], backend);
+  } else {
+    console.error("Demo seeding is disabled. Set ALLOW_DEMO_SEED=true to seed demo data.");
+    process.exit(1);
+  }
+} else if (mode === "reset") run(python, ["-m", "scripts.reset_demo"], backend);
 else if (mode === "test") run(python, ["-m", "pytest", "tests", "-q"], backend);
 else if (mode === "audit")
   run(python, ["-m", "scripts.admin", "audit"], backend);

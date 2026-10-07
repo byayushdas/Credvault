@@ -22,6 +22,7 @@ class Organization(Base):
 class User(Base):
     __tablename__ = 'cv_users'
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    vault_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(Text)
@@ -106,6 +107,17 @@ class ConsentRule(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
     __table_args__ = (CheckConstraint("action IN ('AUTO_APPROVE','ASK','DENY')"),)
+
+class ShareToken(Base):
+    __tablename__ = 'cv_share_tokens'
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey('cv_users.id'), index=True)
+    vault_id: Mapped[str] = mapped_column(String(39))
+    verifier_id: Mapped[str | None] = mapped_column(ForeignKey('cv_organizations.id'))
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    expires_at: Mapped[str] = mapped_column(String(40))
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+
 
 class VerificationRequest(Base):
     __tablename__ = 'cv_requests'

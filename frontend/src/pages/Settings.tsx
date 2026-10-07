@@ -8,6 +8,38 @@ import {
   useAction,
   Modal,
 } from "../components/common/UI";
+
+function OwnerVault() {
+  const [vault, setVault] = useState("");
+  useEffect(() => {
+    api("/vault/me", "GET").then((res) => {
+      if (res.success && res.data) setVault(res.data.vault_id);
+    });
+  }, []);
+
+  if (!vault) return null;
+  return (
+    <section className="card">
+      <h2>Vault identity</h2>
+      <Field label="Vault ID">
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <input readOnly value={vault} style={{ flex: 1 }} />
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => navigator.clipboard.writeText(vault)}
+          >
+            Copy
+          </button>
+        </div>
+      </Field>
+      <p className="notice" style={{ marginTop: "1rem" }}>
+        Share your Vault QR only with trusted issuers and verifiers.
+      </p>
+    </section>
+  );
+}
+
 export default function Settings() {
   const { user, restore } = useSession(),
     [name, setName] = useState(user!.name),
@@ -141,6 +173,7 @@ export default function Settings() {
             </button>
           </Form>
         </section>
+        {user!.role === "OWNER" && <OwnerVault />}
       </div>
       {confirm && (
         <Modal

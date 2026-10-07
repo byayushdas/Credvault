@@ -26,6 +26,32 @@ import { api, label } from "../services/api";
 import type { Dashboard, Notifications } from "../services/api";
 import { useSession, useResource } from "../services/session";
 import { ErrorBox, DateText, useAction } from "./common/UI";
+
+function CredentialIssuedToast() {
+  const [toast, setToast] = useState<any>(null);
+  useEffect(() => {
+    const listener = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      setToast(customEvent.detail);
+      setTimeout(() => setToast(null), 10000);
+    };
+    window.addEventListener("CREDENTIAL_ISSUED", listener);
+    return () => window.removeEventListener("CREDENTIAL_ISSUED", listener);
+  }, []);
+
+  if (!toast) return null;
+  return (
+    <div className="toast" style={{ position: "fixed", bottom: "20px", right: "20px", background: "var(--bg-card)", padding: "1rem", borderRadius: "8px", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", zIndex: 1000, borderLeft: "4px solid var(--primary)", border: "1px solid var(--border)" }}>
+      <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1rem" }}>New credential received</h3>
+      <p style={{ margin: "0 0 1rem 0", fontSize: "0.9rem" }}>
+        {toast.issuer_name} issued a credential to your vault.
+      </p>
+      <Link to={`/owner/documents/${toast.credential_id}`} className="button primary" style={{ display: "inline-block", padding: "0.4rem 0.8rem", background: "var(--primary)", color: "var(--text-inverse)", borderRadius: "4px", textDecoration: "none", fontSize: "0.9rem" }} onClick={() => setToast(null)}>View Credential</Link>
+      <button className="icon-button" onClick={() => setToast(null)} style={{ position: "absolute", top: "0.5rem", right: "0.5rem", background: "transparent", border: "none", cursor: "pointer", fontSize: "1.2rem" }}>×</button>
+    </div>
+  );
+}
+
 export default function Layout() {
   const { user, logout, refresh, live } = useSession(),
     navigate = useNavigate(),
@@ -158,6 +184,7 @@ export default function Layout() {
   );
   return (
     <div className="app-shell">
+      <CredentialIssuedToast />
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>

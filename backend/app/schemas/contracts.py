@@ -51,13 +51,24 @@ class Attachment(Input):
 class Issue(Input):
     owner_id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=3, max_length=160)
-    type: Literal['GENERAL', 'EMPLOYMENT', 'HEALTHCARE', 'DEGREE', 'MARKSHEET', 'SEMESTER_MARKSHEET', 'AGE']
+    type: Literal['GENERAL', 'EMPLOYMENT', 'HEALTHCARE', 'DEGREE', 'MARKSHEET', 'SEMESTER_MARKSHEET', 'AGE', 'AADHAAR_STYLE', 'PAN_STYLE', 'PASSPORT', 'DRIVING_LICENSE']
     claims: dict[str, Any]
     issued_at: str
     expires_at: str | None = None
     attachment: Attachment | None = None
     replaces_id: str | None = None
     draft_id: str | None = None
+
+class IssueToVault(Input):
+    vault_id: str = Field(min_length=39, max_length=39)
+    title: str = Field(min_length=3, max_length=160)
+    type: Literal['GENERAL', 'EMPLOYMENT', 'HEALTHCARE', 'DEGREE', 'MARKSHEET', 'SEMESTER_MARKSHEET', 'AGE', 'AADHAAR_STYLE', 'PAN_STYLE', 'PASSPORT', 'DRIVING_LICENSE']
+    claims: dict[str, Any]
+    issued_at: str
+    expires_at: str | None = None
+    attachment: Attachment | None = None
+    replaces_id: str | None = None
+
 
 class ImportDocument(Input):
     title: str = Field(min_length=3, max_length=160)
@@ -66,7 +77,7 @@ class ImportDocument(Input):
 class Rule(Input):
     verifier_id: str | None = None
     credential_id: str | None = None
-    credential_type: Literal['GENERAL', 'EMPLOYMENT', 'HEALTHCARE', 'DEGREE', 'MARKSHEET', 'SEMESTER_MARKSHEET', 'AGE'] | None = None
+    credential_type: Literal['GENERAL', 'EMPLOYMENT', 'HEALTHCARE', 'DEGREE', 'MARKSHEET', 'SEMESTER_MARKSHEET', 'AGE', 'AADHAAR_STYLE', 'PAN_STYLE', 'PASSPORT', 'DRIVING_LICENSE'] | None = None
     field: str = Field(min_length=1, max_length=80)
     action: Literal['AUTO_APPROVE', 'ASK', 'DENY']
     enabled: bool = True
@@ -81,6 +92,19 @@ class NewRequest(Input):
     fields: list[str] = Field(min_length=1, max_length=20)
     purpose: str = Field(min_length=8, max_length=500)
     lifetime_hours: int = Field(ge=1, le=168)
+
+class VerificationFromVault(Input):
+    vault_id: str = Field(min_length=39, max_length=39)
+    credential_type: Literal['GENERAL', 'EMPLOYMENT', 'HEALTHCARE', 'DEGREE', 'MARKSHEET', 'SEMESTER_MARKSHEET', 'AGE', 'AADHAAR_STYLE', 'PAN_STYLE', 'PASSPORT', 'DRIVING_LICENSE']
+    fields: list[str] = Field(min_length=1, max_length=20)
+    purpose: str = Field(min_length=8, max_length=500)
+    lifetime_hours: int = Field(ge=1, le=168)
+    share_token: str | None = Field(default=None, max_length=120)
+
+class ShareTokenCreate(Input):
+    expires_in_minutes: int = Field(ge=1, le=1440)
+    verifier_id: str | None = Field(default=None)
+
 
 class Decision(Input):
     revision: int = Field(ge=1)

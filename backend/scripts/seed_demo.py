@@ -27,7 +27,8 @@ def seed(db, password):
         if user:
             users.append(user)
             continue
-        user=User(email=email,name=names[i],password_hash=hash_password(password))
+        vault_id = 'CV-' + str(uuid.uuid4()).upper() if roles[i] == 'OWNER' else None
+        user=User(email=email,name=names[i],password_hash=hash_password(password),vault_id=vault_id)
         db.add(user);db.flush()
         org=None
         if i>=2:

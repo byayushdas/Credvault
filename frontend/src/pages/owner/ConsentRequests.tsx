@@ -21,8 +21,7 @@ function RequestDetail({ id }: { id: string }) {
     r = useResource<RequestItem>("/verification/requests/" + id),
     owner = user!.role === "OWNER",
     action = useAction();
-  const [choices, setChoices] = useState<Record<string, string>>({}),
-    [confirm, setConfirm] = useState(false),
+  const [confirm, setConfirm] = useState(false),
     [savedResult, setResult] = useState<{
       payload: Result;
       revision: number;
@@ -91,116 +90,133 @@ function RequestDetail({ id }: { id: string }) {
             <code>{d.owner_id}</code>
           </div>
         </div>
-        <h2>Field-level decisions</h2>
-        <p className="muted">
-          No values are released while any field awaits a decision. Denied
-          fields never appear in the result.
+        <h2>{d.organization} requested:</h2>
+        <p className="muted" style={{ marginBottom: "1.5rem" }}>
+          {d.fields.map(f => label(f.field)).join(", ")}
         </p>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Requested field</th>
-                <th>Decision</th>
-                <th>Method / rule version</th>
-                {owner && <th>Your decision</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {d.fields.map((f) => (
-                <tr key={f.field}>
-                  <td>{label(f.field)}</td>
-                  <td>
-                    <Status value={f.decision} />
-                  </td>
-                  <td>
-                    {label(f.method)}
-                    {f.rules.map((x) => (
-                      <small key={x.id}>
-                        Rule {x.id.slice(0, 8)} v{x.version}: {label(x.action)}
-                      </small>
-                    ))}
-                  </td>
-                  {owner && (
-                    <td>
-                      {f.decision === "PENDING" &&
-                      d.status === "PENDING" &&
-                      d.credential_status === "VALID" ? (
-                        <select
-                          aria-label={"Decision for " + label(f.field)}
-                          value={choices[f.field] || ""}
-                          onChange={(e) =>
-                            setChoices({
-                              ...choices,
-                              [f.field]: e.target.value,
-                            })
-                          }
+        
+        {owner ? (
+          <div className="decisions-grouped">
+            {d.fields.filter((f) => f.decision === "APPROVED" && f.method === "RULE").length > 0 && (
+              <div className="decision-group">
+                <h3>AUTO-APPROVED:</h3>
+                <ul>
+                  {d.fields.filter((f) => f.decision === "APPROVED" && f.method === "RULE").map((f) => (
+                    <li key={f.field}>{label(f.field)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {pending.length > 0 && d.credential_status === "VALID" && (
+              <div className="decision-group">
+                <h3>WAITING FOR APPROVAL:</h3>
+                <ul className="pending-list">
+                  {pending.map((f) => (
+                    <li key={f.field} style={{ marginBottom: "1rem" }}>
+                      <div style={{ fontWeight: "bold", marginBottom: "0.5rem" }}>{label(f.field)}</div>
+                      <div className="actions" style={{ marginTop: 0 }}>
+                        <button
+                          className="primary"
+                          disabled={action.busy}
+                          onClick={() => void action.run(async () => {
+                            await api("/verification/requests/" + id + "/decide", "POST", {
+                              revision: d.revision,
+                              decisions: { [f.field]: "APPROVED" }
+                            });
+                            r.reload();
+                          }, `Approved ${label(f.field)}`)}
                         >
-                          <option value="">Choose…</option>
-                          <option value="APPROVED">Approve</option>
-                          <option value="DENIED">Deny</option>
-                        </select>
-                      ) : (
-                        "Finalized"
-                      )}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {action.feedback}
-        <div className="actions">
-          {owner &&
-            d.status === "PENDING" &&
-            d.credential_status === "VALID" && (
-              <>
-                <button
-                  className="primary"
-                  disabled={
-                    action.busy ||
-                    !pending.length ||
-                    pending.some((f) => !choices[f.field])
-                  }
-                  onClick={() => setConfirm(true)}
-                >
-                  Review decisions
-                </button>
+                          Approve
+                        </button>
+                        <button
+                          className="secondary"
+                          disabled={action.busy}
+                          onClick={() => void action.run(async () => {
+                            await api("/verification/requests/" + id + "/decide", "POST", {
+                              revision: d.revision,
+                              decisions: { [f.field]: "DENIED" }
+                            });
+                            r.reload();
+                          }, `Denied ${label(f.field)}`)}
+                        >
+                          Deny
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {d.fields.filter((f) => f.decision === "DENIED" || (f.decision === "APPROVED" && f.method !== "RULE")).length > 0 && (
+              <div className="decision-group">
+                <h3>Other finalized decisions:</h3>
+                <ul>
+                  {d.fields.filter((f) => f.decision === "DENIED" || (f.decision === "APPROVED" && f.method !== "RULE")).map((f) => (
+                    <li key={f.field}>
+                      {label(f.field)} - <Status value={f.decision} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {action.feedback}
+          </div>
+        ) : (
+          <>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Requested field</th>
+                    <th>Decision</th>
+                    <th>Method / rule version</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.fields.map((f) => (
+                    <tr key={f.field}>
+                      <td>{label(f.field)}</td>
+                      <td>
+                        <Status value={f.decision} />
+                      </td>
+                      <td>
+                        {label(f.method)}
+                        {f.rules.map((x) => (
+                          <small key={x.id}>
+                            Rule {x.id.slice(0, 8)} v{x.version}: {label(x.action)}
+                          </small>
+                        ))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {action.feedback}
+            <div className="actions">
+              {d.status === "PENDING" && (
                 <button
                   className="secondary"
-                  onClick={() => {
-                    setChoices(
-                      Object.fromEntries(
-                        pending.map((f) => [f.field, "DENIED"]),
-                      ),
-                    );
-                    setConfirm(true);
-                  }}
+                  disabled={action.busy}
+                  onClick={() => setConfirm(true)}
                 >
-                  Deny pending fields
+                  Cancel request
                 </button>
-              </>
-            )}
-          {!owner && d.status === "PENDING" && (
-            <button
-              className="secondary"
-              disabled={action.busy}
-              onClick={() => setConfirm(true)}
-            >
-              Cancel request
-            </button>
-          )}
-          {!owner && ["APPROVED", "PARTIAL"].includes(d.status) && (
-            <button
-              className="primary"
-              disabled={action.busy}
-              onClick={() => void loadResult()}
-            >
-              View result
-            </button>
-          )}
-        </div>
+              )}
+              {["APPROVED", "PARTIAL"].includes(d.status) && (
+                <button
+                  className="primary"
+                  disabled={action.busy}
+                  onClick={() => void loadResult()}
+                >
+                  View result
+                </button>
+              )}
+            </div>
+          </>
+        )}
         {d.credential_status !== "VALID" && (
           <p className="error">
             This credential is {label(d.credential_status).toLowerCase()}.
@@ -209,14 +225,26 @@ function RequestDetail({ id }: { id: string }) {
         )}
       </section>
       {result && (
-        <section className="card">
-          <div className="section-head">
-            <h2>Permitted result</h2>
-            <Status value={result.status} />
+        <section className="card" style={{ marginTop: "2rem" }}>
+          <h2>Verification Result</h2>
+          
+          <div style={{ marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-success-light, #ecfdf5)", borderRadius: "var(--radius)", color: "var(--success-text, #065f46)", border: "1px solid var(--success-border, #34d399)" }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <span>✓</span>
+              <strong>Credential Valid</strong>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <span>✓</span>
+              <strong>Issuer Verified</strong>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span>✓</span>
+              <strong>Signature Valid</strong>
+            </div>
           </div>
-          <p className="success">{proof}</p>
-          <p>Signed by {result.issuer}. Only approved claims are included.</p>
-          <dl className="claim-list">
+
+          <h3 style={{ marginTop: "1.5rem" }}>Disclosed Information</h3>
+          <dl className="claim-list" style={{ marginTop: "1rem", marginBottom: "1.5rem" }}>
             {result.claims.map((c) => (
               <div key={c.field}>
                 <dt>{label(c.field)}</dt>
@@ -224,7 +252,13 @@ function RequestDetail({ id }: { id: string }) {
               </div>
             ))}
           </dl>
-          <div className="actions">
+          
+          <h3 style={{ marginTop: "1.5rem" }}>Protected Information</h3>
+          <p className="muted" style={{ fontStyle: "italic", marginTop: "0.5rem" }}>
+            {d.fields.filter(f => f.decision !== "APPROVED").length} fields remained private.
+          </p>
+
+          <div className="actions" style={{ marginTop: "2rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
             <button className="secondary" onClick={() => setJson(!json)}>
               {json ? "Hide JSON" : "Show JSON"}
             </button>
@@ -240,64 +274,32 @@ function RequestDetail({ id }: { id: string }) {
       )}
       {confirm && (
         <Modal
-          title={
-            owner ? "Confirm field decisions" : "Cancel verification request"
-          }
+          title="Cancel verification request"
           onClose={() => setConfirm(false)}
         >
-          {owner ? (
-            <>
-              <p>
-                You are granting only the fields marked Approve. Existing
-                automatic decisions remain visible in the request.
-              </p>
-              <ul>
-                {pending.map((f) => (
-                  <li key={f.field}>
-                    {label(f.field)}:{" "}
-                    <strong>{label(choices[f.field] || "Not selected")}</strong>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <p>The owner will no longer be able to approve this request.</p>
-          )}
+          <p>The owner will no longer be able to approve this request.</p>
           {action.feedback}
           <div className="actions">
             <button className="secondary" onClick={() => setConfirm(false)}>
               Back
             </button>
             <button
-              className={owner ? "primary" : "danger"}
+              className="danger"
               disabled={action.busy}
               onClick={() =>
                 void action.run(
                   async () => {
-                    if (owner)
-                      await api(
-                        "/verification/requests/" + id + "/decide",
-                        "POST",
-                        {
-                          revision: d.revision,
-                          decisions: Object.fromEntries(
-                            pending.map((f) => [f.field, choices[f.field]]),
-                          ),
-                        },
-                      );
-                    else
-                      await api(
-                        "/verification/requests/" + id + "/cancel",
-                        "POST",
-                      );
+                    await api(
+                      "/verification/requests/" + id + "/cancel",
+                      "POST",
+                    );
                     setConfirm(false);
-                    setChoices({});
                   },
-                  owner ? "Your decisions were saved." : "Request cancelled",
+                  "Request cancelled",
                 )
               }
             >
-              Confirm {owner ? "decisions" : "cancellation"}
+              Confirm cancellation
             </button>
           </div>
         </Modal>

@@ -7,7 +7,7 @@ from ..database.database import get_db
 from ..models import Credential, Draft, Idempotency, IssuerKey, Organization, uid, now
 from ..core.dependencies import role, Principal
 from ..core.security import digest
-from ..schemas.contracts import Issue, ImportDocument, Reason
+from ..schemas.contracts import Issue, IssueToVault, ImportDocument, Reason
 from ..services.document_service import (SCHEMAS, issue, summary, content, accessible_document,
     download_bytes, validate_file, store_file, notify, notify_org, owner_lookup)
 from ..services.encryption_service import encrypt, decrypt, canonical
@@ -22,8 +22,32 @@ reader = role('OWNER', 'ISSUER')
 @router.get('/owners/confirm')
 def confirm_owner(vault_id: str, p: Principal = Depends(role('ISSUER', 'VERIFIER', scope='requests:read')), db: Session = Depends(get_db)):
     owner = owner_lookup(db, vault_id)
+    masked_name = owner.name[0] + '*' * (len(owner.name)-2) + owner.name[-1] if len(owner.name) > 2 else owner.name[0] + '*'
+    
+    audit(db, p.user, 'VAULT_QR_SCANNED', owner.id, requested=[vault_id])
+    db.commit()
+    
     # Possession of the exact reference permits existence confirmation only.
-    return {'vault_id': owner.id, 'status': 'Available'}
+    return {'vault_id': owner.vault_id, 'masked_name': masked_name, 'status': 'Available'}
+
+@router.get('/owners/confirm-share')
+def confirm_share(token: str, p: Principal = Depends(role('VERIFIER', scope='requests:read')), db: Session = Depends(get_db)):
+    from ..core.security import digest
+    from ..models import ShareToken, now
+    token_hash = digest(token)
+    record = db.get(ShareToken, token_hash)
+    if not record or record.consumed or record.expires_at < now():
+        raise HTTPException(404, 'Share token is invalid, expired, or consumed')
+    if record.verifier_id and record.verifier_id != p.org.id:
+        raise HTTPException(403, 'This token is restricted to a different verifier')
+        
+    owner = owner_lookup(db, record.vault_id)
+    masked_name = owner.name[0] + '*' * (len(owner.name)-2) + owner.name[-1] if len(owner.name) > 2 else owner.name[0] + '*'
+    
+    audit(db, p.user, 'VAULT_QR_SCANNED', owner.id, requested=['temporary_share_token'])
+    db.commit()
+    return {'vault_id': owner.vault_id, 'masked_name': masked_name, 'status': 'Available', 'token': token}
+
 
 @router.get('/schemas')
 def schemas(p: Principal = Depends(role('OWNER', 'ISSUER', 'VERIFIER', scope='requests:read'))):
@@ -50,6 +74,46 @@ def issue_document(data: Issue, idempotency_key: str = Header(min_length=16, max
         if not draft or draft.issuer_id != p.org.id:
             raise HTTPException(404, 'Draft unavailable')
         db.delete(draft)
+    db.add(Idempotency(scope=scope, key=idempotency_key, fingerprint=fingerprint, result_id=d.id))
+    db.commit()
+    db.info.pop('file_rollbacks', None)
+    return summary(db, d)
+
+@router.post('/issuer/documents/issue-to-vault', status_code=201)
+def issue_document_to_vault(data: IssueToVault, idempotency_key: str = Header(min_length=16, max_length=80),
+                            p: Principal = Depends(issuer), db: Session = Depends(get_db)):
+    scope = 'issue-vault:' + p.org.id
+    fingerprint = digest(canonical(data.model_dump()))
+    prior = db.get(Idempotency, (scope, idempotency_key))
+    if prior:
+        if prior.fingerprint != fingerprint:
+            raise HTTPException(409, 'This submission key was used for different content')
+        return summary(db, db.get(Credential, prior.result_id))
+    
+    from ..models import User, Membership
+    owner = db.scalar(select(User).join(Membership, Membership.user_id == User.id).where(
+        Membership.role == 'OWNER', User.active.is_(True), User.vault_id == data.vault_id))
+    if not owner:
+        raise HTTPException(404, 'Owner vault is unavailable or invalid.')
+    
+    issue_data = Issue(owner_id=owner.id, title=data.title, type=data.type, claims=data.claims, 
+                       issued_at=data.issued_at, expires_at=data.expires_at, 
+                       attachment=data.attachment, replaces_id=data.replaces_id)
+    
+    d = issue(db, p, issue_data)
+    
+    audit(db, p.user, 'CREDENTIAL_ISSUED_TO_VAULT', owner.id, d.id, outcome='SUCCESS', requested=[data.vault_id])
+    
+    from ..services.live_service import dispatch_sse
+    org = db.get(Organization, p.org.id)
+    dispatch_sse(owner.id, 'CREDENTIAL_ISSUED', {
+        "event": "CREDENTIAL_ISSUED",
+        "credential_id": d.id,
+        "credential_type": d.type,
+        "issuer_name": org.name,
+        "timestamp": d.issued_at
+    })
+    
     db.add(Idempotency(scope=scope, key=idempotency_key, fingerprint=fingerprint, result_id=d.id))
     db.commit()
     db.info.pop('file_rollbacks', None)

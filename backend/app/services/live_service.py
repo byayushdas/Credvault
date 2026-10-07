@@ -28,3 +28,17 @@ def audit_changed(db, event):
     if orgs:
         users.update(db.scalars(select(Membership.user_id).where(Membership.organization_id.in_(orgs))))
     changed(db, users)
+
+import asyncio
+from collections import defaultdict
+from typing import Dict, List, Any
+
+# In-memory queue per user for live events
+sse_queues: Dict[str, List[asyncio.Queue]] = defaultdict(list)
+
+def dispatch_sse(user_id: str, event_name: str, payload: Any):
+    for q in sse_queues.get(user_id, []):
+        try:
+            q.put_nowait((event_name, payload))
+        except asyncio.QueueFull:
+            pass

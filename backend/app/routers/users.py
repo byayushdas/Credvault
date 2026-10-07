@@ -3,13 +3,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..database.database import get_db
-from ..models import Credential, VerificationRequest, Notification, AuditLog, now
+from ..models import Credential, VerificationRequest, Notification, AuditLog, now, ShareToken
 from ..core.dependencies import browser, Principal, user_view
-from ..schemas.contracts import Profile
+from ..schemas.contracts import Profile, ShareTokenCreate
 from ..services.document_service import summary, credential_status
 from ..services.audit_service import audit, audit_payload
 from .verification import view_request
 from ..services.live_service import changed
+from ..core.security import digest, future
 
 router = APIRouter(prefix='/api/v1', tags=['Workspace'])
 
@@ -98,3 +99,67 @@ def read_notification(notification_id: str, p: Principal = Depends(browser), db:
 @router.get('/audit')
 def logs(p: Principal = Depends(browser), db: Session = Depends(get_db)):
     return [{**audit_payload(e), 'hash':e.hash} for e in db.scalars(audit_query(db, p).order_by(AuditLog.id.desc()))]
+
+@router.get('/vault/me')
+def get_vault_me(p: Principal = Depends(browser)):
+    if p.role != 'OWNER':
+        raise HTTPException(403, 'Only owners can access their vault identity')
+    return {
+        "success": True,
+        "data": {
+            "vault_id": p.user.vault_id,
+            "owner_id": p.user.id,
+            "status": "ACTIVE" if p.user.active else "INACTIVE"
+        }
+    }
+
+@router.get('/vault/me/qr')
+def get_vault_qr(p: Principal = Depends(browser), db: Session = Depends(get_db)):
+    if p.role != 'OWNER':
+        raise HTTPException(403, 'Only owners can access their vault QR')
+        
+    from ..services.audit_service import audit
+    audit(db, p.user, 'VAULT_QR_GENERATED', p.user.id, requested=[p.user.vault_id])
+    db.commit()
+    
+    return {
+        "success": True,
+        "data": {
+            "vault_id": p.user.vault_id,
+            "qr_payload": f"credvault://vault/{p.user.vault_id}",
+            "qr_version": 1
+        }
+    }
+
+@router.post('/vault/me/share-token', status_code=201)
+def create_share_token(data: ShareTokenCreate, p: Principal = Depends(browser), db: Session = Depends(get_db)):
+    if p.role != 'OWNER':
+        raise HTTPException(403, 'Only owners can create share tokens')
+    import secrets
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = digest(raw_token)
+    
+    token_record = ShareToken(
+        token_hash=token_hash, 
+        owner_id=p.user.id, 
+        vault_id=p.user.vault_id,
+        verifier_id=data.verifier_id,
+        created_at=now(),
+        expires_at=future(minutes=data.expires_in_minutes),
+        consumed=False
+    )
+    db.add(token_record)
+    
+    from ..services.audit_service import audit
+    audit(db, p.user, 'VAULT_QR_GENERATED', p.user.id, requested=['temporary_share_token'])
+    db.commit()
+    
+    return {
+        "success": True,
+        "data": {
+            "token": raw_token,
+            "expires_at": token_record.expires_at,
+            "qr_payload": f"credvault://share/{raw_token}"
+        }
+    }
+

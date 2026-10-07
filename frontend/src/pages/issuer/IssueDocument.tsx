@@ -11,8 +11,11 @@ import {
   DateText,
   ErrorBox,
 } from "../../components/common/UI";
+import { QrScanner } from "../../components/common/QrScanner";
+import type { VaultScanResult } from "../../components/common/QrScanner";
+
 interface IssueData {
-  owner_id: string;
+  vault_id: string;
   title: string;
   type: string;
   claims: Record<string, string | number | boolean>;
@@ -27,15 +30,7 @@ interface Draft {
   updated_at: string;
   data: IssueData;
 }
-function educationData(data: IssueData): IssueData {
-  if (data.type !== "DEGREE") return data;
-  return {
-    ...data,
-    claims: Object.fromEntries(
-      Object.entries(data.claims).filter(([name]) => name !== "cgpa"),
-    ),
-  };
-}
+
 export default function IssueDocument() {
   const [params] = useSearchParams(),
     navigate = useNavigate(),
@@ -43,11 +38,11 @@ export default function IssueDocument() {
     drafts = useResource<Draft[]>("/issuer/drafts"),
     action = useAction();
   const [data, setData] = useState<IssueData>(() => ({
-    owner_id: "",
+    vault_id: "",
     title: "",
     type: "GENERAL",
     claims: {},
-    issued_at: new Date().toISOString().slice(0, 16),
+    issued_at: new Date().toISOString(),
     expires_at: null,
     ...(params.get("replace") ? { replaces_id: params.get("replace")! } : {}),
   }));
@@ -58,6 +53,9 @@ export default function IssueDocument() {
     [loadError, setLoadError] = useState("");
   const [savedDraft, setSavedDraft] = useState(false);
   const [confirmedOwner, setConfirmedOwner] = useState("");
+  const [isScanning, setIsScanning] = useState(false);
+  const [targetVault, setTargetVault] = useState<{ vault_id: string; masked_name: string } | null>(null);
+  const [scanError, setScanError] = useState("");
   const replacement = params.get("replace");
   useEffect(() => {
     if (!replacement) return;
@@ -65,27 +63,21 @@ export default function IssueDocument() {
     api<Doc>("/documents/" + replacement)
       .then((d) => {
         if (active)
-          setData((v) =>
-            educationData({
-              ...v,
-              owner_id: d.owner_id,
-              title: d.title,
-              type: d.type,
-              claims: d.claims || {},
-              replaces_id: d.id,
-            }),
-          );
+          setData((v) => ({
+            ...v,
+            vault_id: "", // Requires re-scan for replacement
+            title: d.title,
+            type: d.type,
+            claims: d.claims || {},
+            replaces_id: d.id,
+          }));
       })
       .catch((e) => setLoadError(e.message));
     return () => {
       active = false;
     };
   }, [replacement]);
-  const fields = Object.fromEntries(
-    Object.entries(schemas.data?.[data.type]?.fields || {}).filter(
-      ([name]) => data.type !== "DEGREE" || name !== "cgpa",
-    ),
-  );
+  const fields = schemas.data?.[data.type]?.fields || {};
   const attachmentContent = data.attachment?.content || "";
   const fileType = attachmentContent.startsWith("iVBORw0KGgo")
     ? "image/png"
@@ -116,36 +108,54 @@ export default function IssueDocument() {
   }
   async function saveDraft() {
     await action.run(async () => {
-      await api("/issuer/drafts/" + draftId, "PUT", educationData(data));
+      await api("/issuer/drafts/" + draftId, "PUT", data);
       setSavedDraft(true);
     }, "Encrypted draft saved.");
   }
   async function issue() {
     await action.run(async () => {
       const payload = {
-        ...educationData(data),
+        ...data,
         ...(savedDraft ? { draft_id: draftId } : {}),
       };
-      const doc = await api<Doc>("/issuer/documents", "POST", payload, key);
+      const doc = await api<Doc>("/issuer/documents/issue-to-vault", "POST", payload, key);
       navigate("/issuer/documents/" + doc.id);
-    }, "Signed credential issued");
+    }, "Signed credential issued to vault");
   }
   async function reviewCredential() {
-    await action.run(async () => {
-      const recipient = await api<{ vault_id: string }>(
-        "/owners/confirm?vault_id=" + encodeURIComponent(data.owner_id),
-      );
-      setConfirmedOwner(recipient.vault_id);
-      setReview(true);
-    }, "Recipient vault confirmed");
+    setReview(true);
   }
-  function loadDraft(d: Draft) {
-    setData(educationData(d.data));
+
+  const handleScan = async (res: VaultScanResult) => {
+    try {
+      setScanError("");
+      const confirmRes = await api<{ vault_id: string; masked_name: string; status: string }>(
+        "/owners/confirm?vault_id=" + encodeURIComponent(res.vault_id)
+      );
+      setTargetVault(confirmRes);
+      update("vault_id", confirmRes.vault_id);
+      setIsScanning(false);
+    } catch (e: any) {
+      setScanError(e.message || "Failed to confirm vault");
+    }
+  };
+  async function loadDraft(d: Draft) {
+    const draftData = d.data as any;
+    const vId = draftData.vault_id || draftData.owner_id || "";
+    setData({ ...d.data, vault_id: vId });
     setDraftId(d.id);
     setSavedDraft(true);
     setKey(crypto.randomUUID());
     setReview(false);
     setAttachmentName(d.data.attachment ? "Saved attachment" : "");
+    if (vId) {
+      try {
+        const confirmRes = await api<{ vault_id: string; masked_name: string; status: string }>(
+          "/owners/confirm?vault_id=" + encodeURIComponent(vId)
+        );
+        setTargetVault(confirmRes);
+      } catch {}
+    }
   }
   return (
     <>
@@ -165,33 +175,73 @@ export default function IssueDocument() {
           >
             {!review ? (
               <>
-                <div className="form-grid">
-                  <Field label="Owner vault ID">
-                    <input
-                      required
-                      pattern="[0-9a-fA-F-]{36}"
-                      value={data.owner_id}
-                      onChange={(e) =>
-                        update("owner_id", e.target.value.trim())
-                      }
-                    />
-                  </Field>
-                  <Field label="Credential type">
-                    <select
-                      value={data.type}
-                      onChange={(e) => {
-                        update("type", e.target.value);
-                        update("claims", {});
-                      }}
-                    >
-                      {Object.entries(schemas.data || {}).map(([k, s]) => (
-                        <option key={k} value={k}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
+                {!targetVault ? (
+                  <div style={{ marginBottom: "1rem" }}>
+                    {!isScanning ? (
+                      <div className="card" style={{ padding: "1.5rem", background: "var(--bg-card-alt)", borderRadius: "var(--radius)" }}>
+                        <h3 style={{ marginTop: 0 }}>Target Vault</h3>
+                        <p style={{ color: "var(--text-muted)", marginBottom: "1rem" }}>Identify the owner vault to issue this credential to.</p>
+                        
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                          <input 
+                            placeholder="Enter Vault ID (CV-...)" 
+                            value={data.vault_id}
+                            onChange={(e) => update("vault_id", e.target.value)}
+                            style={{ flex: 1 }}
+                          />
+                          <button 
+                            type="button" 
+                            className="primary" 
+                            onClick={() => handleScan({ vault_id: data.vault_id, source: "manual" })}
+                            disabled={!data.vault_id}
+                          >
+                            Lookup
+                          </button>
+                        </div>
+                        
+                        <div style={{ textAlign: "center", margin: "1rem 0", color: "var(--text-muted)", fontSize: "0.9rem" }}>OR</div>
+                        
+                        <button type="button" className="secondary" onClick={() => setIsScanning(true)} style={{ width: "100%" }}>
+                          Scan Owner QR
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="scanner-container card">
+                        <QrScanner
+                          onScan={handleScan}
+                          onCancel={() => { setIsScanning(false); setScanError(""); }}
+                        />
+                        {scanError && <p className="error" style={{ color: "red", marginTop: "1rem" }}>{scanError}</p>}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="target-vault-info card" style={{ marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-card-alt)", borderRadius: "var(--radius)" }}>
+                      <h3 style={{ marginTop: 0 }}>Target Vault</h3>
+                      <p className="monospace" style={{ margin: "0.5rem 0" }}>{targetVault.vault_id}</p>
+                      <p style={{ margin: "0.5rem 0" }}>Owner: <strong>{targetVault.masked_name}</strong></p>
+                      <button type="button" className="secondary" onClick={() => { setTargetVault(null); update("vault_id", ""); setIsScanning(true); }}>
+                        Change Vault
+                      </button>
+                    </div>
+                    <div className="form-grid">
+                      <Field label="Credential type">
+                        <select
+                          value={data.type}
+                          onChange={(e) => {
+                            update("type", e.target.value);
+                            update("claims", {});
+                          }}
+                        >
+                          {Object.entries(schemas.data || {}).map(([k, s]) => (
+                            <option key={k} value={k}>
+                              {s.label}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
                 <Field label="Title">
                   <input
                     required
@@ -274,16 +324,27 @@ export default function IssueDocument() {
                   </p>
                 )}
                 <div className="form-grid">
-                  <Field label="Issue date and time (UTC)">
+                  <Field label="Issue date and time (Local)">
                     <input
                       required
                       type="datetime-local"
-                      value={data.issued_at.slice(0, 16)}
-                      onChange={(e) => update("issued_at", e.target.value)}
+                      value={(() => {
+                        if (!data.issued_at) return "";
+                        const d = new Date(data.issued_at);
+                        if (isNaN(d.getTime())) return "";
+                        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+                        return d.toISOString().slice(0, 16);
+                      })()}
+                      onChange={(e) => {
+                        const d = new Date(e.target.value);
+                        if (!isNaN(d.getTime())) {
+                          update("issued_at", d.toISOString());
+                        }
+                      }}
                     />
                   </Field>
                   <Field
-                    label="Expiry date and time (UTC)"
+                    label="Expiry date and time (Local)"
                     hint={
                       data.type === "AGE"
                         ? "Required for age attestations."
@@ -293,10 +354,23 @@ export default function IssueDocument() {
                     <input
                       required={data.type === "AGE"}
                       type="datetime-local"
-                      value={data.expires_at?.slice(0, 16) || ""}
-                      onChange={(e) =>
-                        update("expires_at", e.target.value || null)
-                      }
+                      value={(() => {
+                        if (!data.expires_at) return "";
+                        const d = new Date(data.expires_at);
+                        if (isNaN(d.getTime())) return "";
+                        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+                        return d.toISOString().slice(0, 16);
+                      })()}
+                      onChange={(e) => {
+                        if (!e.target.value) {
+                          update("expires_at", null);
+                        } else {
+                          const d = new Date(e.target.value);
+                          if (!isNaN(d.getTime())) {
+                            update("expires_at", d.toISOString());
+                          }
+                        }
+                      }}
                     />
                   </Field>
                 </div>
@@ -366,6 +440,8 @@ export default function IssueDocument() {
                     </p>
                   )}
                 </section>
+                </>
+              )}
               </>
             ) : (
               <>
@@ -375,15 +451,13 @@ export default function IssueDocument() {
                     <dd>{data.title}</dd>
                   </div>
                   <div>
-                    <dt>Owner</dt>
+                    <dt>Target Vault</dt>
                     <dd>
-                      <code>{data.owner_id}</code>
-                      {confirmedOwner === data.owner_id && (
-                        <small>
-                          Confirmed active owner vault. No private profile was
-                          disclosed.
-                        </small>
-                      )}
+                      <code>{data.vault_id}</code>
+                      <br/>
+                      <small>
+                        Confirmed active owner vault. Owner: {targetVault?.masked_name}
+                      </small>
                     </dd>
                   </div>
                   <div>
@@ -398,11 +472,11 @@ export default function IssueDocument() {
                   ))}
                   <div>
                     <dt>Issued</dt>
-                    <dd>{data.issued_at}</dd>
+                    <dd>{new Date(data.issued_at).toLocaleString()}</dd>
                   </div>
                   <div>
                     <dt>Expires</dt>
-                    <dd>{data.expires_at || "No expiry"}</dd>
+                    <dd>{data.expires_at ? new Date(data.expires_at).toLocaleString() : "No expiry"}</dd>
                   </div>
                   <div>
                     <dt>Attachment</dt>

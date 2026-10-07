@@ -40,12 +40,31 @@ SCHEMAS = {
         'percentage': {'label': 'Percentage', 'type': 'number'}, 'rollNumber': {'label': 'Roll number', 'type': 'string'}}},
     'AGE': {'label': 'Age threshold', 'category': 'Identity', 'fields': {
         'over18': {'label': 'Age 18 or older', 'type': 'boolean'},
-        'assessmentDate': {'label': 'Assessment date', 'type': 'date'}}}
+        'assessmentDate': {'label': 'Assessment date', 'type': 'date'}}},
+    'AADHAAR_STYLE': {'label': 'Aadhaar-style demo', 'category': 'Government', 'fields': {
+        'uid': {'label': 'Aadhaar Number', 'type': 'string'},
+        'name': {'label': 'Name', 'type': 'string'},
+        'dob': {'label': 'Date of Birth', 'type': 'date'}}},
+    'PAN_STYLE': {'label': 'PAN-style demo', 'category': 'Government', 'fields': {
+        'pan': {'label': 'PAN Number', 'type': 'string'},
+        'name': {'label': 'Name', 'type': 'string'},
+        'dob': {'label': 'Date of Birth', 'type': 'date'}}},
+    'PASSPORT': {'label': 'Passport', 'category': 'Government', 'fields': {
+        'passportNumber': {'label': 'Passport Number', 'type': 'string'},
+        'nationality': {'label': 'Nationality', 'type': 'string'},
+        'name': {'label': 'Name', 'type': 'string'},
+        'dob': {'label': 'Date of Birth', 'type': 'date'}}},
+    'DRIVING_LICENSE': {'label': 'Driving Licence', 'category': 'Government', 'fields': {
+        'licenseNumber': {'label': 'Licence Number', 'type': 'string'},
+        'name': {'label': 'Name', 'type': 'string'},
+        'dob': {'label': 'Date of Birth', 'type': 'date'},
+        'vehicleClasses': {'label': 'Vehicle Classes', 'type': 'string'}}}
 }
 
 def owner_lookup(db, reference):
+    from sqlalchemy import or_
     owner = db.scalar(select(User).join(Membership, Membership.user_id == User.id).where(
-        Membership.role == 'OWNER', User.active.is_(True), User.id == reference))
+        Membership.role == 'OWNER', User.active.is_(True), or_(User.id == reference, User.vault_id == reference)))
     if not owner:
         raise HTTPException(404, 'Owner reference is unavailable. Ask the owner for their exact vault ID.')
     return owner

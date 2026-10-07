@@ -90,6 +90,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       refresh();
       void restore();
     });
+    stream.addEventListener("CREDENTIAL_ISSUED", (e: any) => {
+      try {
+        const payload = JSON.parse(e.data);
+        window.dispatchEvent(new CustomEvent("CREDENTIAL_ISSUED", { detail: payload }));
+      } catch (err) {}
+    });
     stream.onerror = () => {
       liveConnected.current = false;
       setLive(false);

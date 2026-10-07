@@ -1,4 +1,5 @@
 import secrets
+import uuid
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from sqlalchemy import select, delete
@@ -19,7 +20,8 @@ def register(data: Register, db: DBSession = Depends(get_db)):
     email = str(data.email).lower()
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, 'Email is already registered')
-    user = User(email=email, name=data.name, password_hash=hash_password(data.password))
+    vault_id = 'CV-' + str(uuid.uuid4()).upper()
+    user = User(email=email, name=data.name, password_hash=hash_password(data.password), vault_id=vault_id)
     db.add(user)
     db.flush()
     db.add(Membership(user_id=user.id, role='OWNER'))

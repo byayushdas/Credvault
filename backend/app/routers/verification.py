@@ -3,10 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..database.database import get_db
-from ..models import Credential, VerificationRequest, RequestField, Organization, now, uid
+from ..models import Credential, VerificationRequest, RequestField, Organization, User, now, uid
 from ..core.dependencies import role, Principal
 from ..core.security import digest, future
-from ..schemas.contracts import NewRequest, Decision
+from ..schemas.contracts import NewRequest, Decision, VerificationFromVault
 from ..services.document_service import owner_lookup, SCHEMAS, credential_status, content, notify, notify_org
 from ..services.encryption_service import canonical
 from ..services.signature_service import claim_payload, key_trusted
@@ -76,6 +76,71 @@ def submit(data: NewRequest, idempotency_key: str = Header(min_length=16, max_le
     finalize(req, fields)
     audit(db, p.user, 'REQUEST_SUBMITTED', owner.id, d.id, req.id, data.fields, outcome=req.status, method='RULE')
     audit(db, p.user, 'AUTOMATIC_DECISIONS', owner.id, d.id, req.id, data.fields, outcome=req.status, method='RULE')
+    notify(db, owner.id, p.org.name + ' submitted a verification request.', '/owner/requests/' + req.id)
+    result = view_request(db, req, p.user)
+    db.commit()
+    return result
+
+@router.post('/requests/from-vault', status_code=201)
+def submit_from_vault(data: VerificationFromVault, idempotency_key: str = Header(min_length=16, max_length=80),
+           p: Principal = Depends(role('VERIFIER', scope='requests:write')), db: Session = Depends(get_db)):
+    fingerprint = digest(canonical(data.model_dump()))
+    existing = db.scalar(select(VerificationRequest).where(VerificationRequest.verifier_id == p.org.id,
+        VerificationRequest.idempotency_key == idempotency_key))
+    if existing:
+        if existing.fingerprint != fingerprint:
+            raise HTTPException(409, 'Submission key already used for different content')
+        return view_request(db, existing, p.user)
+    
+    from ..models import Membership, ShareToken, now
+    owner = db.scalar(select(User).join(Membership, Membership.user_id == User.id).where(User.vault_id == data.vault_id, User.active.is_(True), Membership.role == 'OWNER'))
+    if not owner:
+        raise HTTPException(404, 'Owner vault not found')
+
+    if data.share_token:
+        token_hash = digest(data.share_token)
+        record = db.get(ShareToken, token_hash)
+        if not record or record.consumed or record.expires_at < now():
+            raise HTTPException(404, 'Share token is invalid, expired, or consumed')
+        if record.verifier_id and record.verifier_id != p.org.id:
+            raise HTTPException(403, 'This token is restricted to a different verifier')
+        if record.vault_id != data.vault_id:
+            raise HTTPException(422, 'Token vault mismatch')
+            
+        record.consumed = True
+        db.add(record)
+
+
+    # Find the latest valid credential of requested type
+    d = db.scalar(
+        select(Credential).where(
+            Credential.owner_id == owner.id, 
+            Credential.type == data.credential_type
+        ).order_by(Credential.issued_at.desc()).limit(1)
+    )
+    if not d or credential_status(db, d) != 'VALID':
+        raise HTTPException(404, 'Owner does not have a valid credential of this type')
+        
+    if len(set(data.fields)) != len(data.fields) or not set(data.fields) <= set(content(db, d)[0]):
+        raise HTTPException(422, 'Unknown, duplicated or forbidden fields')
+        
+    req = VerificationRequest(id=uid(), owner_id=owner.id, verifier_id=p.org.id, actor_id=p.user.id,
+        credential_id=d.id, purpose=data.purpose, expires_at=future(hours=data.lifetime_hours),
+        idempotency_key=idempotency_key, fingerprint=fingerprint)
+    db.add(req)
+    db.flush()
+    
+    fields = []
+    for field in data.fields:
+        decision, rules = evaluate(db, owner.id, p.org.id, d, field)
+        f = RequestField(request_id=req.id, field=field, decision=decision, method='RULE', rules=rules)
+        db.add(f)
+        record_decision(db, f)
+        fields.append(f)
+        
+    finalize(req, fields)
+    audit(db, p.user, 'VERIFICATION_STARTED_FROM_QR', owner.id, d.id, req.id, requested=data.fields, outcome=req.status, method='RULE')
+    audit(db, p.user, 'AUTOMATIC_DECISIONS', owner.id, d.id, req.id, requested=data.fields, outcome=req.status, method='RULE')
     notify(db, owner.id, p.org.name + ' submitted a verification request.', '/owner/requests/' + req.id)
     result = view_request(db, req, p.user)
     db.commit()
