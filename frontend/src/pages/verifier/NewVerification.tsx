@@ -37,7 +37,9 @@ export default function NewVerification() {
     [key] = useState(() => crypto.randomUUID());
   async function next() {
     if (step === 1) {
-      if (!/^[0-9a-f-]{36}$/i.test(owner)) return;
+      if (!/^CV-[0-9a-fA-F-]{36}$/.test(owner)) {
+        return;
+      }
       await action.run(async () => {
         const confirmRes = await api<{ vault_id: string; masked_name: string }>(
           "/owners/confirm?vault_id=" + encodeURIComponent(owner)
@@ -138,6 +140,8 @@ export default function NewVerification() {
                       placeholder="Enter Vault ID (CV-...)" 
                       value={owner}
                       onChange={(e) => setOwner(e.target.value.trim())}
+                      pattern="^CV-[0-9a-fA-F-]{36}$"
+                      title="Vault ID must start with CV- followed by a 36-character valid identifier"
                       style={{ flex: 1 }}
                       required
                     />

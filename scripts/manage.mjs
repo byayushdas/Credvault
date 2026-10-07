@@ -35,40 +35,19 @@ if (mode === "setup") {
     "-r",
     path.join(backend, "requirements.txt"),
   ]);
-  fs.mkdirSync(path.join(root, ".local"), { recursive: true });
-  const file = path.join(root, ".local", "database.json");
-  if (!fs.existsSync(file))
-    fs.writeFileSync(
-      file,
-      JSON.stringify(
-        {
-          admin: crypto.randomBytes(32).toString("hex"),
-          app: crypto.randomBytes(32).toString("hex"),
-        },
-        null,
-        2,
-      ),
-      { mode: 0o600, flag: "wx" },
-    );
-  const secret = JSON.parse(fs.readFileSync(file, "utf8"));
   if (!fs.existsSync(path.join(backend, ".env")))
     fs.writeFileSync(
       path.join(backend, ".env"),
-      "DATABASE_URL=postgresql+psycopg://credvault:" +
-        secret.app +
-        "@127.0.0.1:55432/credvault\nAES_MASTER_KEY=" +
+      "DATABASE_URL=postgresql+psycopg://postgres:YOUR_PASSWORD@127.0.0.1:5432/postgres\nAES_MASTER_KEY=" +
         crypto.randomBytes(32).toString("base64") +
         "\nENVIRONMENT=development\nAPP_ORIGIN=http://localhost:5173\nSECURE_COOKIES=false\n",
       { mode: 0o600, flag: "wx" },
     );
   console.log(
-    "Configuration preserved. Next: npm run db, then npm run migrate and npm run seed.",
+    "Configuration preserved. Next: edit backend/.env, then npm run migrate and npm run seed.",
   );
 } else if (mode === "migrate") {
   run(python, ["-m", "alembic", "upgrade", "head"], backend);
-  const localConfig = fs.readFileSync(path.join(backend, ".env"), "utf8");
-  if (localConfig.includes("@127.0.0.1:55432/credvault"))
-    run(process.execPath, [path.join(root, "scripts/grants.mjs")]);
 } else if (mode === "seed") {
   if (process.env.ALLOW_DEMO_SEED === 'true') {
     run(python, ["-m", "scripts.seed_demo"], backend);

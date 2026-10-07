@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Html5QrcodeScanner } from "html5-qrcode";
-import { Field, Form } from "./UI";
+import { Field } from "./UI";
 
 export type VaultScanResult = {
   vault_id?: string;
@@ -61,8 +61,7 @@ export function QrScanner({ onScan, onCancel }: QrScannerProps) {
     };
   }, [scannedVaultId, scannedToken]);
 
-  const handleManualSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleManualSubmit = () => {
     if (!/^CV-[0-9a-fA-F-]{36}$/.test(manualId)) {
       setError("Vault ID must start with CV- followed by a valid identifier");
       return;
@@ -111,19 +110,25 @@ export function QrScanner({ onScan, onCancel }: QrScannerProps) {
           
           <div style={{ marginTop: '2rem', borderTop: '1px solid #e2e8f0', paddingTop: '1.5rem' }}>
             <h3>Or enter manually</h3>
-            <Form onSubmit={handleManualSubmit}>
+            <div>
               <Field label="Vault ID">
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <input 
                     value={manualId} 
                     onChange={e => setManualId(e.target.value)} 
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (manualId) handleManualSubmit();
+                      }
+                    }}
                     placeholder="CV-..." 
                     style={{ flex: 1 }}
                   />
-                  <button type="submit" className="primary" disabled={!manualId}>Submit</button>
+                  <button type="button" onClick={handleManualSubmit} className="primary" disabled={!manualId}>Submit</button>
                 </div>
               </Field>
-            </Form>
+            </div>
           </div>
         </>
       )}

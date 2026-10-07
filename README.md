@@ -26,13 +26,7 @@ npm run setup
 
 `setup` creates `.venv` and `backend/.env` only when missing; existing secrets are preserved. On Windows it uses `py`; on Linux/macOS it uses `python3`. If necessary set `CREDVAULT_PYTHON` to your Python executable before setup. For this Codex machine, the existing `.venv` is already configured.
 
-Keep one terminal running:
-
-```text
-npm run db
-```
-
-In another terminal:
+Run in your terminal:
 
 ```text
 npm run migrate
@@ -40,9 +34,7 @@ npm run seed
 npm run dev
 ```
 
-Open **http://localhost:5173**. Use `localhost`, matching `APP_ORIGIN`, for browser mutations. The API binds to loopback port 8000; PostgreSQL uses loopback port 55432. `/health` checks the real database. Ctrl+C stops each foreground command; data remains in `.local/postgres`. Never delete this directory to fix a startup problem.
-
-The optional bundled PostgreSQL runner uses actual PostgreSQL binaries, not an in-memory substitute. On Linux run it as an ordinary user. First installation needs internet to download dependencies. It does not install an OS service or alter system accounts. Secrets in `.local/database.json`, `backend/.env` and credential files are ignored by Git. Preserve them with your backups.
+Open **http://localhost:5173**. Use `localhost`, matching `APP_ORIGIN`, for browser mutations. The API binds to loopback port 8000. `/health` checks the real database. Ctrl+C stops each foreground command. Secrets in `backend/.env` and credential files are ignored by Git. Preserve them with your backups.
 
 ### Development accounts
 
@@ -282,3 +274,4 @@ API: FastAPI, SQLAlchemy, PostgreSQL/psycopg. Schemas: `app/models/records.py`. 
 React 19, TypeScript and Vite with the existing npm lockfile. The authenticated React Router shell calls the FastAPI backend through a same-origin proxy; there is no mock/localStorage data source or frontend role override.
 
 Use the root [README](../README.md) to start the complete application. For isolated frontend work: `npm run dev`, `npm run build`, `npm run lint` from this directory. The backend must run on loopback port 8000, and the browser origin must match APP_ORIGIN. Main UI contracts live in `src/services/api.ts`; authenticated session refresh and invalidation in `src/services/session.tsx`.
+
