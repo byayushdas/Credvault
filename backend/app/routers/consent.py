@@ -1,67 +1,87 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from typing import List, Optional
-from ..schemas.consent import ConsentRuleCreate, ConsentRuleResponse, ConsentAction
-from ..services.consent_service import create_consent_rule
-from ..core.dependencies import require_owner
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 from ..database.database import get_db
-from ..models.user import User
-from ..models.consent_rule import ConsentRule
-from ..services.audit_service import create_audit_event
-from ..models.audit_log import AuditAction
+from ..models import ConsentRule, Credential, Organization, now
+from ..core.dependencies import role, Principal
+from ..schemas.contracts import Rule, RuleUpdate, timestamp
+from ..services.document_service import SCHEMAS
+from ..services.audit_service import audit
 
-router = APIRouter(prefix="/api/v1/consent/rules", tags=["Consent"])
+router = APIRouter(prefix='/api/v1/consent/rules', tags=['Consent'])
+owner = role('OWNER')
 
-@router.post("/", response_model=ConsentRuleResponse, summary="Create Consent Rule", description="Creates a new consent rule (AUTO_APPROVE, ASK, DENY) for a specific document, verifier, and field.\n\nAuth Required: OWNER JWT")
-async def create_consent_rule_api(
-    rule: ConsentRuleCreate, 
-    current_user: User = Depends(require_owner), 
-    db: AsyncSession = Depends(get_db)
-):
-    db_rule = await create_consent_rule(db, rule, current_user.id)
-    return db_rule
+def view(db, r):
+    doc = db.get(Credential, r.credential_id) if r.credential_id else None
+    org = db.get(Organization, r.verifier_id) if r.verifier_id else None
+    return {'id': r.id, 'verifier_id': r.verifier_id, 'verifier': org.name if org else 'All approved verifiers',
+        'credential_id': r.credential_id, 'document': doc.title if doc else 'All matching credentials',
+        'credential_type': r.credential_type, 'field': r.field, 'action': r.action,
+        'enabled': r.enabled, 'expires_at': r.expires_at, 'version': r.version, 'updated_at': r.updated_at}
 
-@router.get("/", response_model=List[ConsentRuleResponse], summary="List Consent Rules", description="Returns all consent rules configured by the current owner. Can filter by document_id.\n\nAuth Required: OWNER JWT")
-async def list_consent_rules_api(
-    document_id: Optional[int] = None,
-    current_user: User = Depends(require_owner), 
-    db: AsyncSession = Depends(get_db)
-):
-    query = select(ConsentRule).filter(ConsentRule.owner_id == current_user.id)
-    if document_id:
-        query = query.filter(ConsentRule.document_id == document_id)
-    result = await db.execute(query)
-    return result.scalars().all()
+def validate(db, p, data):
+    if data.credential_id:
+        d = db.get(Credential, data.credential_id)
+        if not d or d.owner_id != p.user.id or d.type not in SCHEMAS:
+            raise HTTPException(404, 'Credential unavailable')
+        fields = set(SCHEMAS[d.type]['fields'])
+        if data.credential_type and d.type != data.credential_type:
+            raise HTTPException(422, 'Credential type does not match document')
+    elif data.credential_type:
+        fields = set(SCHEMAS[data.credential_type]['fields'])
+    else:
+        fields = {f for s in SCHEMAS.values() for f in s['fields']}
+    if data.field != '*' and data.field not in fields:
+        raise HTTPException(422, 'Unknown field for this scope')
+    if data.verifier_id:
+        org = db.get(Organization, data.verifier_id)
+        if not org or not org.approved or org.kind != 'VERIFIER':
+            raise HTTPException(422, 'Choose an approved verifier')
+    if data.expires_at:
+        data.expires_at = timestamp(data.expires_at)
+        if data.enabled and data.expires_at <= now():
+            raise HTTPException(422, 'Rule expiry must be in the future')
 
-@router.put("/{rule_id}", response_model=ConsentRuleResponse, summary="Update Consent Rule", description="Updates the action (AUTO_APPROVE, ASK, DENY) of an existing consent rule.\n\nAuth Required: OWNER JWT")
-async def update_consent_rule_api(
-    rule_id: int,
-    action: ConsentAction,
-    current_user: User = Depends(require_owner), 
-    db: AsyncSession = Depends(get_db)
-):
-    result = await db.execute(select(ConsentRule).filter(ConsentRule.id == rule_id))
-    db_rule = result.scalars().first()
-    if not db_rule or db_rule.owner_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Consent rule not found")
-        
-    db_rule.action = action
-    await db.commit()
-    await db.refresh(db_rule)
-    return db_rule
+@router.get('')
+def rules(p: Principal = Depends(owner), db: Session = Depends(get_db)):
+    return [view(db, r) for r in db.scalars(select(ConsentRule).where(ConsentRule.owner_id == p.user.id).order_by(ConsentRule.updated_at.desc()))]
 
-@router.delete("/{rule_id}", summary="Delete Consent Rule", description="Deletes an existing consent rule.\n\nAuth Required: OWNER JWT")
-async def delete_consent_rule_api(
-    rule_id: int,
-    current_user: User = Depends(require_owner), 
-    db: AsyncSession = Depends(get_db)
-):
-    result = await db.execute(select(ConsentRule).filter(ConsentRule.id == rule_id))
-    db_rule = result.scalars().first()
-    if not db_rule or db_rule.owner_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Consent rule not found")
-        
-    await db.delete(db_rule)
-    await db.commit()
-    return {"message": "Rule deleted"}
+@router.post('', status_code=201)
+def create(data: Rule, p: Principal = Depends(owner), db: Session = Depends(get_db)):
+    validate(db, p, data)
+    r = ConsentRule(owner_id=p.user.id, **data.model_dump())
+    db.add(r)
+    db.flush()
+    audit(db, p.user, 'CONSENT_RULE_CREATED', p.user.id, data.credential_id,
+        requested=[data.field], outcome=data.action, method='RULE_VERSION_1')
+    db.commit()
+    return view(db, r)
+
+@router.put('/{rule_id}')
+def update(rule_id: str, data: RuleUpdate, p: Principal = Depends(owner), db: Session = Depends(get_db)):
+    r = db.get(ConsentRule, rule_id)
+    if not r or r.owner_id != p.user.id:
+        raise HTTPException(404, 'Rule unavailable')
+    if r.version != data.version:
+        raise HTTPException(409, 'Rule changed. Refresh before updating.')
+    validate(db, p, data)
+    for k, v in data.model_dump(exclude={'version'}).items():
+        setattr(r, k, v)
+    r.version += 1
+    r.updated_at = now()
+    audit(db, p.user, 'CONSENT_RULE_UPDATED', p.user.id, data.credential_id,
+        requested=[data.field], outcome=data.action if data.enabled else 'DISABLED', method='RULE_VERSION_' + str(r.version))
+    db.commit()
+    return view(db, r)
+
+@router.delete('/{rule_id}')
+def delete_rule(rule_id: str, version: int = Query(ge=1), p: Principal = Depends(owner), db: Session = Depends(get_db)):
+    r = db.get(ConsentRule, rule_id)
+    if not r or r.owner_id != p.user.id:
+        raise HTTPException(404, 'Rule unavailable')
+    if r.version != version:
+        raise HTTPException(409, 'Rule changed. Refresh before deleting.')
+    audit(db, p.user, 'CONSENT_RULE_DELETED', p.user.id, r.credential_id, requested=[r.field], outcome='DELETED', method='RULE_VERSION_' + str(r.version))
+    db.delete(r)
+    db.commit()
+    return {'message': 'Rule deleted; requests will be re-evaluated before disclosure.'}

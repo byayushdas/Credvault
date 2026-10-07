@@ -1,144 +1,266 @@
-import { useState } from 'react';
-import { mockDocuments } from '../../data/mockData';
-import { ShieldCheck, FileCheck, Search, Filter, ShieldAlert, Clock, Eye } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import EmptyState from '../../components/common/EmptyState';
-import { FileSearch } from 'lucide-react';
-
+import { useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Upload, Plus } from "lucide-react";
+import { api, fileContent, label } from "../../services/api";
+import type { Doc } from "../../services/api";
+import { useResource, useSession } from "../../services/session";
+import {
+  PageHead,
+  Loading,
+  ErrorBox,
+  Status,
+  DateText,
+  Empty,
+  Field,
+  Modal,
+  Form,
+  useAction,
+  Pager,
+  pageRows,
+} from "../../components/common/UI";
 export default function MyDocuments() {
-  const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState('All');
-
-  const filteredDocs = mockDocuments.filter(doc => {
-    const matchesSearch = doc.name.toLowerCase().includes(search.toLowerCase()) || doc.issuer.toLowerCase().includes(search.toLowerCase());
-    const matchesCategory = categoryFilter === 'All' || doc.category === categoryFilter;
-    const matchesStatus = statusFilter === 'All' || doc.status === statusFilter || (statusFilter === 'Verified' && doc.verified);
-    return matchesSearch && matchesCategory && matchesStatus;
-  });
-
+  const { user } = useSession(),
+    r = useResource<Doc[]>("/documents"),
+    [params] = useSearchParams();
+  const [search, setSearch] = useState(""),
+    [category, setCategory] = useState(params.get("category") || ""),
+    [status, setStatus] = useState(params.get("status") || ""),
+    [sort, setSort] = useState("newest"),
+    [page, setPage] = useState(1),
+    [show, setShow] = useState(false),
+    [title, setTitle] = useState(""),
+    [file, setFile] = useState<File>(),
+    [kind, setKind] = useState("personal");
+  const action = useAction(),
+    owner = user!.role === "OWNER",
+    root = "/" + user!.role.toLowerCase();
+  const rows = (r.data || [])
+    .filter(
+      (d) =>
+        (!search ||
+          (d.title + " " + d.issuer)
+            .toLowerCase()
+            .includes(search.toLowerCase())) &&
+        (!category || d.category === category) &&
+        (!status ? d.status !== "ARCHIVED" : d.status === status),
+    )
+    .sort((a, b) =>
+      sort === "title"
+        ? a.title.localeCompare(b.title)
+        : sort === "oldest"
+          ? a.created_at.localeCompare(b.created_at)
+          : b.created_at.localeCompare(a.created_at),
+    );
+  async function save() {
+    if (!file) return;
+    await action.run(
+      async () => {
+        if (kind === "signed") {
+          await api(
+            "/documents/import-package",
+            "POST",
+            JSON.parse(await file.text()),
+          );
+        } else {
+          await api("/documents/import", "POST", {
+            title,
+            attachment: await fileContent(file),
+          });
+        }
+        setShow(false);
+        setTitle("");
+        setFile(undefined);
+      },
+      kind === "signed"
+        ? "Signed package validated."
+        : "Personal document imported as unverified.",
+    );
+  }
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">My Documents</h1>
-          <p className="text-slate-500 text-sm mt-1">Manage your digitally verified credentials.</p>
-        </div>
-        <button className="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors shadow-sm shrink-0">
-          Import Document
-        </button>
-      </div>
-
-      <div className="panel p-5 mb-6 bg-white flex flex-col md:flex-row gap-4 items-center border-b border-slate-200">
-        <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input 
-            type="text" 
-            placeholder="Search documents..." 
-            className="w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        
-        <div className="flex gap-4 w-full md:w-auto">
-          <div className="flex items-center space-x-2">
-            <Filter className="w-4 h-4 text-slate-500" />
-            <select 
-              className="text-sm border border-slate-300 rounded-md py-2 pl-3 pr-8 focus:outline-none focus:border-primary-500"
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
+    <>
+      <PageHead
+        title={owner ? "My Documents" : "Issued Credentials"}
+        description={
+          owner
+            ? "Manage signed credentials and personal uploads."
+            : "Credentials issued by your approved organisation."
+        }
+      >
+        {owner ? (
+          <button className="primary" onClick={() => setShow(true)}>
+            <Upload size={16} />
+            Import document
+          </button>
+        ) : (
+          <Link className="primary button" to="/issuer/issue">
+            <Plus size={16} />
+            Issue credential
+          </Link>
+        )}
+      </PageHead>
+      {action.feedback}
+      <section className="card">
+        <div className="filters">
+          <Field label="Search documents">
+            <input
+              value={search}
+              placeholder="Title or issuer"
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+            />
+          </Field>
+          <Field label="Category">
+            <select
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value);
+                setPage(1);
+              }}
             >
-              <option value="All">All Categories</option>
-              <option value="Government">Government</option>
-              <option value="Education">Education</option>
-            </select>
-          </div>
-
-          <select 
-            className="text-sm border border-slate-300 rounded-md py-2 pl-3 pr-8 focus:outline-none focus:border-primary-500"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="All">All Statuses</option>
-            <option value="Verified">Verified</option>
-            <option value="Pending">Pending</option>
-            <option value="Action Required">Action Required</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="panel overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Document</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Category</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Issuer</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Issued</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {filteredDocs.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-8">
-                    <EmptyState 
-                      icon={FileSearch}
-                      title="No documents found"
-                      description="Try adjusting your search or category filters to find what you're looking for."
-                    />
-                  </td>
-                </tr>
-              ) : filteredDocs.map((doc) => (
-                <tr key={doc.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <span className="text-sm font-bold text-slate-900">{doc.name}</span>
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <span className="text-sm text-slate-600 flex items-center">
-                      <FileCheck className="w-3.5 h-3.5 mr-1.5 text-slate-400" />
-                      {doc.category}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <span className="text-sm text-slate-600">{doc.issuer}</span>
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap text-sm text-slate-500 font-medium">
-                    {new Date(doc.issuedDate).toLocaleDateString()}
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    {doc.verified ? (
-                      <span className="badge-success px-2 py-1 rounded text-xs font-bold flex items-center w-fit">
-                        <ShieldCheck className="w-3 h-3 mr-1" />
-                        Verified
-                      </span>
-                    ) : doc.status === 'Pending' ? (
-                      <span className="badge-pending px-2 py-1 rounded text-xs font-bold flex items-center w-fit">
-                        <Clock className="w-3 h-3 mr-1" />
-                        Pending
-                      </span>
-                    ) : (
-                      <span className="badge-error px-2 py-1 rounded text-xs font-bold flex items-center w-fit">
-                        <ShieldAlert className="w-3 h-3 mr-1" />
-                        Action Required
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap text-right">
-                    <Link to={`/owner/documents/${doc.id}`} className="inline-flex items-center text-xs font-bold bg-white border border-slate-200 px-3 py-1.5 rounded hover:bg-slate-50 hover:border-slate-300 text-slate-700 transition-all">
-                      <Eye className="w-3.5 h-3.5 mr-1" />
-                      View
-                    </Link>
-                  </td>
-                </tr>
+              <option value="">All categories</option>
+              {[
+                "General",
+                "Employment",
+                "Healthcare",
+                "Education",
+                "Identity",
+                "Personal",
+              ].map((x) => (
+                <option key={x}>{x}</option>
               ))}
-            </tbody>
-          </table>
+            </select>
+          </Field>
+          <Field label="Status">
+            <select
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">Active records</option>
+              {[
+                "VALID",
+                "UNVERIFIED",
+                "REVOKED",
+                "EXPIRED",
+                "SUPERSEDED",
+                "ARCHIVED",
+                "UNTRUSTED",
+              ].map((x) => (
+                <option key={x} value={x}>
+                  {label(x)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Sort">
+            <select value={sort} onChange={(e) => setSort(e.target.value)}>
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="title">Title A–Z</option>
+            </select>
+          </Field>
         </div>
-      </div>
-    </div>
+        <ErrorBox message={r.error} retry={r.reload} />
+        {r.loading ? (
+          <Loading />
+        ) : rows.length ? (
+          <>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Document</th>
+                    <th>Issuer</th>
+                    <th>Issued / expires</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows(rows, page).map((d) => (
+                    <tr key={d.id}>
+                      <td>
+                        <strong>{d.title}</strong>
+                        <small>
+                          {d.category} · Version {d.version}
+                        </small>
+                      </td>
+                      <td>{d.issuer}</td>
+                      <td>
+                        <DateText value={d.issued_at} />
+                        <small>
+                          Expires: <DateText value={d.expires_at} />
+                        </small>
+                      </td>
+                      <td>
+                        <Status value={d.status} />
+                      </td>
+                      <td>
+                        <Link to={root + "/documents/" + d.id}>View</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pager page={page} total={rows.length} setPage={setPage} />
+          </>
+        ) : (
+          <Empty>No documents match these filters.</Empty>
+        )}
+      </section>
+      {show && (
+        <Modal title="Import document" onClose={() => setShow(false)}>
+          <p>
+            Personal uploads remain unverified. Signed packages must be issued
+            to your owner reference and registered in this vault.
+          </p>
+          <Form onSubmit={() => void save()}>
+            <Field label="Import type">
+              <select value={kind} onChange={(e) => setKind(e.target.value)}>
+                <option value="personal">Personal PDF or image</option>
+                <option value="signed">CredVault signed package (.json)</option>
+              </select>
+            </Field>
+            {kind === "personal" && (
+              <Field label="Document title">
+                <input
+                  required
+                  minLength={3}
+                  maxLength={160}
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+              </Field>
+            )}
+            <Field label="File">
+              <input
+                required
+                type="file"
+                accept={kind === "signed" ? ".json" : ".pdf,.png,.jpg,.jpeg"}
+                onChange={(e) => setFile(e.target.files?.[0])}
+              />
+            </Field>
+            {action.feedback}
+            <div className="actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setShow(false)}
+              >
+                Cancel
+              </button>
+              <button className="primary" disabled={action.busy}>
+                Import
+              </button>
+            </div>
+          </Form>
+        </Modal>
+      )}
+    </>
   );
 }

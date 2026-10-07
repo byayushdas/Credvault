@@ -1,24 +1,31 @@
-from pydantic_settings import BaseSettings
+import base64
+from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ROOT = Path(__file__).resolve().parents[2]
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "sqlite+aiosqlite:///./credvault.db"
-    JWT_SECRET_KEY: str = "CHANGE_THIS_IN_LOCAL_ENVIRONMENT"
-    JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    AES_MASTER_KEY: str = "GENERATE_A_32_BYTE_BASE64_KEY"
-    STORAGE_PATH: str = "./storage/encrypted"
-    PRIVATE_KEY_PATH: str = "./keys/issuer_private.pem"
-    PUBLIC_KEY_PATH: str = "./keys/issuer_public.pem"
-    MAX_UPLOAD_SIZE_MB: int = 10
-    CORS_ORIGINS: str = "http://localhost:5173"
+    model_config = SettingsConfigDict(env_file=ROOT / '.env', extra='ignore')
+    DATABASE_URL: str = 'postgresql+psycopg://credvault:credvault_local@localhost:5432/credvault'
+    MIGRATION_DATABASE_URL: str | None = None
+    AES_MASTER_KEY: str
+    ENVIRONMENT: str = 'development'
+    APP_ORIGIN: str = 'http://localhost:5173'
+    STORAGE_PATH: str = str(ROOT / 'storage' / 'encrypted')
+    MAILBOX_PATH: str = str(ROOT / 'mailbox')
+    SESSION_HOURS: int = 8
+    SECURE_COOKIES: bool = False
 
-    @property
-    def async_database_url(self) -> str:
-        if self.DATABASE_URL.startswith("sqlite://") and not self.DATABASE_URL.startswith("sqlite+aiosqlite://"):
-            return self.DATABASE_URL.replace("sqlite://", "sqlite+aiosqlite://", 1)
-        return self.DATABASE_URL
-        
-    class Config:
-        env_file = ".env"
+    def encryption_key(self):
+        try:
+            key = base64.b64decode(self.AES_MASTER_KEY, validate=True)
+            if len(key) != 32:
+                raise ValueError()
+            return key
+        except Exception as exc:
+            raise RuntimeError('AES_MASTER_KEY must contain exactly 32 base64-encoded bytes. Run setup once; preserve the key.') from exc
 
 settings = Settings()
+settings.encryption_key()
+if settings.ENVIRONMENT == 'production' and (not settings.SECURE_COOKIES or not settings.APP_ORIGIN.startswith('https://')):
+    raise RuntimeError('Production requires an HTTPS APP_ORIGIN and SECURE_COOKIES=true')

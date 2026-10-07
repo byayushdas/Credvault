@@ -1,154 +1,237 @@
-import { Shield, CheckCircle2, ArrowRight } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-
-export default function Login() {
-  const navigate = useNavigate();
-
-  const handleDemoLogin = (role: string) => {
-    localStorage.setItem('credvault_role', role);
-    if (role === 'Owner') {
-      navigate('/owner/dashboard');
-    } else {
-      navigate('/');
-    }
-  };
-
+import { useState } from "react";
+import {
+  Link,
+  Navigate,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
+import { ShieldCheck } from "lucide-react";
+import { api } from "../../services/api";
+import { useSession } from "../../services/session";
+import { Field, Form, useAction, ErrorBox } from "../../components/common/UI";
+export default function Login({
+  mode = "login",
+}: {
+  mode?: "login" | "register" | "forgot" | "reset";
+}) {
+  const { user, restore, error } = useSession(),
+    navigate = useNavigate(),
+    location = useLocation(),
+    [params] = useSearchParams();
+  const [email, setEmail] = useState(""),
+    [password, setPassword] = useState(""),
+    [name, setName] = useState(""),
+    [organization, setOrganization] = useState("");
+  const role = ["ISSUER", "VERIFIER"].includes(params.get("role") || "")
+    ? params.get("role")!
+    : "OWNER";
+  const action = useAction();
+  const title = {
+    login: "Sign in to CredVault",
+    register: "Create your account",
+    forgot: "Reset your password",
+    reset: "Choose a new password",
+  }[mode];
+  if (user && mode === "login")
+    return (
+      <Navigate to={"/" + user.role.toLowerCase() + "/dashboard"} replace />
+    );
+  async function submit() {
+    await action.run(
+      async () => {
+        if (mode === "login") {
+          await api("/auth/login", "POST", { email, password });
+          const u = await restore();
+          if (!u) throw new Error("Could not restore your session.");
+          const from = location.state?.from;
+          const allowed =
+            typeof from === "string" &&
+            (from.startsWith("/" + u.role.toLowerCase() + "/") ||
+              ["/settings", "/help", "/audit"].includes(from));
+          navigate(allowed ? from : "/" + u.role.toLowerCase() + "/dashboard", {
+            replace: true,
+          });
+        } else if (mode === "register") {
+          if (role === "OWNER") {
+            await api("/auth/register", "POST", { name, email, password });
+            navigate("/login", { state: { created: true } });
+          } else {
+            const result = await api<{ message: string }>(
+              "/auth/register-organization",
+              "POST",
+              { name, email, password, role, organization },
+            );
+            navigate("/login", { state: { approvalMessage: result.message } });
+          }
+        } else if (mode === "forgot") {
+          const r = await api<{ message: string }>(
+            "/auth/forgot-password",
+            "POST",
+            { email },
+          );
+          return r;
+        } else {
+          await api("/auth/reset-password", "POST", {
+            token: params.get("token") || "",
+            password,
+          });
+          navigate("/login", { state: { reset: true } });
+        }
+      },
+      mode === "forgot"
+        ? "If your account exists, a link is in the local development mail sink. No email was sent."
+        : "Saved.",
+    );
+  }
   return (
-    <div className="min-h-screen flex bg-slate-50 font-sans selection:bg-primary-100 selection:text-primary-900">
-      
-      {/* Left side: Branding */}
-      <div className="hidden lg:flex lg:w-5/12 bg-primary-900 text-white flex-col justify-between p-12 relative overflow-hidden">
-        {/* Decorative background elements */}
-        <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-primary-800/50 via-primary-900 to-primary-950"></div>
-        <div className="absolute -left-20 top-20 w-96 h-96 bg-primary-600/20 rounded-full blur-3xl"></div>
-        
-        <div className="relative z-10 flex items-center space-x-3">
-          <div className="w-10 h-10 bg-white rounded-md flex items-center justify-center text-primary-700 shadow-lg">
-            <Shield className="w-6 h-6" />
-          </div>
-          <span className="font-bold text-2xl tracking-tight">CredVault</span>
+    <main className="auth-page">
+      <section className="auth-intro">
+        <div className="brand">
+          <ShieldCheck size={32} />
+          <strong>CredVault</strong>
         </div>
-
-        <div className="relative z-10 max-w-md my-auto">
-          <h1 className="text-5xl font-bold leading-tight mb-6 tracking-tight">
-            Your documents.<br />Your control.
-          </h1>
-          <p className="text-primary-200 text-lg leading-relaxed mb-10">
-            Securely store verified credentials and share only the information you choose.
+        <h1>
+          Your credentials.
+          <br />
+          Your consent.
+        </h1>
+        <p>
+          A private workspace for issuer-signed credentials and field-level
+          sharing.
+        </p>
+        <ul>
+          <li>Encrypted document storage</li>
+          <li>Registered issuer signatures</li>
+          <li>Consent and access history</li>
+        </ul>
+        <small>Local development · Fictional demonstration data</small>
+      </section>
+      <section className="auth-form">
+        <h2>{title}</h2>
+        <p className="muted">
+          {mode === "login"
+            ? "Sign in to access your CredVault account."
+            : mode === "register" && role === "OWNER"
+              ? "Receive credentials and control which fields you share."
+              : "Issuer and verifier organisations require administrator approval before portal access."}
+        </p>
+        <ErrorBox message={error} />
+        {location.state?.created && (
+          <p className="success">Account created. You can sign in.</p>
+        )}
+        {location.state?.approvalMessage && (
+          <p className="notice" role="status">
+            {location.state.approvalMessage}
           </p>
-          
-          <div className="space-y-4">
-            <div className="flex items-center text-primary-100">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400 mr-3 shrink-0" />
-              <span className="font-medium">Verified Issuers</span>
-            </div>
-            <div className="flex items-center text-primary-100">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400 mr-3 shrink-0" />
-              <span className="font-medium">Selective Disclosure</span>
-            </div>
-            <div className="flex items-center text-primary-100">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400 mr-3 shrink-0" />
-              <span className="font-medium">Consent-Controlled Sharing</span>
-            </div>
-          </div>
-        </div>
-        
-        <div className="relative z-10 text-primary-400 text-sm font-medium">
-          Enterprise Grade Identity Security
-        </div>
-      </div>
-
-      {/* Right side: Login Card */}
-      <div className="flex-1 flex flex-col justify-center items-center p-6 sm:p-12">
-        <div className="w-full max-w-md">
-          <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm mb-6">
-            <div className="mb-8 text-center">
-              <h2 className="text-2xl font-bold text-slate-900">Sign In</h2>
-              <p className="text-slate-500 text-sm mt-2">Enter your credentials to access your vault</p>
-            </div>
-
-            <form className="space-y-5" onSubmit={(e) => e.preventDefault()}>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Email</label>
-                <input 
-                  type="email" 
-                  className="w-full px-4 py-2.5 rounded-md border border-slate-300 focus:border-primary-500 focus:ring focus:ring-primary-500/20 outline-none transition-all text-sm"
-                  placeholder="name@example.com"
-                  readOnly
-                />
-              </div>
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="block text-sm font-semibold text-slate-700">Password</label>
-                  <a href="#" className="text-xs font-semibold text-primary-600 hover:text-primary-700">Forgot password?</a>
-                </div>
-                <input 
-                  type="password" 
-                  className="w-full px-4 py-2.5 rounded-md border border-slate-300 focus:border-primary-500 focus:ring focus:ring-primary-500/20 outline-none transition-all text-sm"
-                  placeholder="••••••••"
-                  readOnly
-                />
-              </div>
-              <button 
-                type="button"
-                className="w-full bg-slate-900 text-white font-semibold py-2.5 rounded-md hover:bg-slate-800 transition-colors shadow-sm mt-2"
-              >
-                Sign In
-              </button>
-            </form>
-          </div>
-
-          <div className="relative mt-10 mb-8">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-200"></div>
-            </div>
-            <div className="relative flex justify-center">
-              <span className="bg-slate-50 px-4 text-xs font-bold uppercase tracking-wider text-slate-400">
-                Demo Mode
-              </span>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <button 
-              onClick={() => handleDemoLogin('Owner')}
-              className="w-full flex items-center justify-between bg-white border border-primary-200 p-4 rounded-xl hover:border-primary-400 hover:shadow-sm transition-all group cursor-pointer"
-            >
-              <div className="flex flex-col text-left">
-                <span className="font-bold text-slate-900">Continue as Document Owner</span>
-                <span className="text-xs text-slate-500 mt-0.5">Manage and share your credentials</span>
-              </div>
-              <ArrowRight className="w-5 h-5 text-primary-400 group-hover:text-primary-600 group-hover:translate-x-1 transition-all" />
-            </button>
-            
-            <button 
-              onClick={() => handleDemoLogin('Issuer')}
-              className="w-full flex items-center justify-between bg-white border border-slate-200 p-4 rounded-xl hover:border-slate-300 hover:shadow-sm transition-all group cursor-pointer"
-            >
-              <div className="flex flex-col text-left">
-                <span className="font-bold text-slate-700">Continue as Issuer</span>
-                <span className="text-xs text-slate-500 mt-0.5">Issue and verify new credentials</span>
-              </div>
-              <ArrowRight className="w-5 h-5 text-slate-400 group-hover:text-slate-600 group-hover:translate-x-1 transition-all" />
-            </button>
-
-            <button 
-              onClick={() => handleDemoLogin('Verifier')}
-              className="w-full flex items-center justify-between bg-white border border-slate-200 p-4 rounded-xl hover:border-slate-300 hover:shadow-sm transition-all group cursor-pointer"
-            >
-              <div className="flex flex-col text-left">
-                <span className="font-bold text-slate-700">Continue as Verifier</span>
-                <span className="text-xs text-slate-500 mt-0.5">Request and verify user credentials</span>
-              </div>
-              <ArrowRight className="w-5 h-5 text-slate-400 group-hover:text-slate-600 group-hover:translate-x-1 transition-all" />
-            </button>
-          </div>
-
-          <p className="text-center text-xs text-slate-400 mt-8 font-medium">
-            Local prototype — authentication is simulated.
+        )}
+        {location.state?.reset && (
+          <p className="success">
+            Password reset. Sign in with your new password.
           </p>
+        )}
+        <Form onSubmit={() => void submit()}>
+          {mode === "register" && (
+            <>
+              <Field label="Account role">
+                <select
+                  value={role}
+                  onChange={(e) =>
+                    navigate("/register?role=" + e.target.value, {
+                      replace: true,
+                    })
+                  }
+                >
+                  <option value="OWNER">
+                    Owner — receive and share credentials
+                  </option>
+                  <option value="ISSUER">
+                    Issuer — organisation issuing credentials
+                  </option>
+                  <option value="VERIFIER">
+                    Verifier — organisation requesting verification
+                  </option>
+                </select>
+              </Field>
+              {role !== "OWNER" && (
+                <Field
+                  label="Organisation name"
+                  hint="Company, hospital, university, government agency or another organisation."
+                >
+                  <input
+                    required
+                    minLength={3}
+                    maxLength={160}
+                    autoComplete="organization"
+                    value={organization}
+                    onChange={(e) => setOrganization(e.target.value)}
+                  />
+                </Field>
+              )}
+            </>
+          )}
+          {mode === "register" && (
+            <Field label="Full name">
+              <input
+                required
+                minLength={2}
+                maxLength={120}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoComplete="name"
+              />
+            </Field>
+          )}
+          {mode !== "reset" && (
+            <Field label="Email">
+              <input
+                required
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="username"
+              />
+            </Field>
+          )}
+          {mode !== "forgot" && (
+            <Field label="Password">
+              <input
+                required
+                type="password"
+                minLength={1}
+                maxLength={128}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={
+                  mode === "login" ? "current-password" : "new-password"
+                }
+              />
+            </Field>
+          )}
+          {action.feedback}
+          <button disabled={action.busy} className="primary full">
+            {action.busy
+              ? "Please wait…"
+              : mode === "login"
+                ? "Sign in"
+                : mode === "register"
+                  ? "Create account"
+                  : mode === "forgot"
+                    ? "Create reset link"
+                    : "Save password"}
+          </button>
+        </Form>
+        <div className="auth-links">
+          {mode === "login" ? (
+            <>
+              <Link to="/forgot">Forgot password?</Link>
+              <Link to="/register">Create account</Link>
+            </>
+          ) : (
+            <Link to="/login">Back to sign in</Link>
+          )}
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

@@ -1,305 +1,366 @@
-import { useState, useEffect } from 'react';
-import { Shield, Plus, Edit2, Trash2, X, AlertCircle } from 'lucide-react';
-import { mockDocuments } from '../../data/mockData';
-import { getData, setData } from '../../services/localStorageService';
-
-export interface ConsentRule {
-  id: string;
-  verifier: string;
-  documentId: string;
-  documentName: string;
-  field: string;
-  rule: 'Auto-Approve' | 'Ask Me' | 'Deny';
-  lastUpdated: string;
+import { useState } from "react";
+import { api, label } from "../../services/api";
+import type { Rule, Doc, Org, Schema } from "../../services/api";
+import { useResource } from "../../services/session";
+import {
+  PageHead,
+  Loading,
+  ErrorBox,
+  Field,
+  Modal,
+  Form,
+  useAction,
+  Empty,
+  Status,
+  DateText,
+  Pager,
+  pageRows,
+} from "../../components/common/UI";
+const fresh: Rule = {
+  verifier_id: null,
+  credential_id: null,
+  credential_type: null,
+  field: "*",
+  action: "ASK",
+  enabled: true,
+  expires_at: null,
+};
+function body(r: Rule) {
+  return {
+    ...(r.id ? { version: r.version } : {}),
+    verifier_id: r.verifier_id,
+    credential_id: r.credential_id,
+    credential_type: r.credential_type,
+    field: r.field,
+    action: r.action,
+    enabled: r.enabled,
+    expires_at: r.expires_at,
+  };
 }
-
-const DEFAULT_RULES: ConsentRule[] = [
-  { id: '1', verifier: 'ABC Technologies', documentId: 'DOC-005', documentName: 'B.Tech Degree Certificate', field: 'degree', rule: 'Auto-Approve', lastUpdated: '2026-10-01T10:00:00Z' },
-  { id: '2', verifier: 'ABC Technologies', documentId: 'DOC-005', documentName: 'B.Tech Degree Certificate', field: 'cgpa', rule: 'Ask Me', lastUpdated: '2026-10-01T10:05:00Z' },
-  { id: '3', verifier: 'ABC Technologies', documentId: 'DOC-003', documentName: 'Passport', field: 'dob', rule: 'Deny', lastUpdated: '2026-10-02T14:30:00Z' },
-  { id: '4', verifier: 'Bank Demo', documentId: 'DOC-002', documentName: 'PAN-style Document', field: 'accountNumber', rule: 'Ask Me', lastUpdated: '2026-10-03T09:15:00Z' }
-];
-
 export default function ConsentRules() {
-  const [rules, setRules] = useState<ConsentRule[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
-
-  // Form State
-  const [formData, setFormData] = useState({
-    verifier: '',
-    documentId: '',
-    field: '',
-    rule: 'Ask Me' as 'Auto-Approve' | 'Ask Me' | 'Deny'
-  });
-
-  useEffect(() => {
-    const saved = getData('consent_rules', null);
-    if (saved) {
-      setRules(saved);
-    } else {
-      setRules(DEFAULT_RULES);
-      setData('consent_rules', DEFAULT_RULES);
-    }
-  }, []);
-
-  const saveRulesToLocal = (newRules: ConsentRule[]) => {
-    setRules(newRules);
-    setData('consent_rules', newRules);
-  };
-
-  const getRuleBadge = (ruleType: string) => {
-    switch (ruleType) {
-      case 'Auto-Approve':
-        return <span className="badge-success px-2 py-1 rounded text-xs font-bold uppercase tracking-wider">Auto-Approve</span>;
-      case 'Ask Me':
-        return <span className="badge-pending px-2 py-1 rounded text-xs font-bold uppercase tracking-wider">Ask</span>;
-      case 'Deny':
-        return <span className="badge-error px-2 py-1 rounded text-xs font-bold uppercase tracking-wider">Deny</span>;
-      default:
-        return null;
-    }
-  };
-
-  const openModalForNew = () => {
-    setEditingRuleId(null);
-    setFormData({ verifier: '', documentId: '', field: '', rule: 'Ask Me' });
-    setIsModalOpen(true);
-  };
-
-  const openModalForEdit = (rule: ConsentRule) => {
-    setEditingRuleId(rule.id);
-    setFormData({
-      verifier: rule.verifier,
-      documentId: rule.documentId,
-      field: rule.field,
-      rule: rule.rule
-    });
-    setIsModalOpen(true);
-  };
-
-  const deleteRule = (id: string) => {
-    saveRulesToLocal(rules.filter(r => r.id !== id));
-  };
-
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.verifier || !formData.documentId || !formData.field) return;
-
-    const docName = mockDocuments.find(d => d.id === formData.documentId)?.name || 'Unknown Document';
-
-    if (editingRuleId) {
-      saveRulesToLocal(rules.map(r => r.id === editingRuleId ? {
-        ...r,
-        verifier: formData.verifier,
-        documentId: formData.documentId,
-        documentName: docName,
-        field: formData.field,
-        rule: formData.rule,
-        lastUpdated: new Date().toISOString()
-      } : r));
-    } else {
-      saveRulesToLocal([...rules, {
-        id: Math.random().toString(36).substring(7),
-        verifier: formData.verifier,
-        documentId: formData.documentId,
-        documentName: docName,
-        field: formData.field,
-        rule: formData.rule,
-        lastUpdated: new Date().toISOString()
-      }]);
-    }
-    setIsModalOpen(false);
-  };
-
-  const selectedDocument = mockDocuments.find(d => d.id === formData.documentId);
-  const availableFields = selectedDocument ? Object.keys(selectedDocument.fields) : [];
-
+  const r = useResource<Rule[]>("/consent/rules"),
+    docs = useResource<Doc[]>("/documents"),
+    orgs = useResource<Org[]>("/registry"),
+    schemas = useResource<Record<string, Schema>>("/schemas");
+  const [edit, setEdit] = useState<Rule>(),
+    [deleting, setDeleting] = useState<Rule>(),
+    [filter, setFilter] = useState(""),
+    [search, setSearch] = useState(""),
+    [page, setPage] = useState(1),
+    action = useAction();
+  const selectedType = edit?.credential_id
+    ? docs.data?.find((d) => d.id === edit.credential_id)?.type
+    : edit?.credential_type;
+  const fields = selectedType
+    ? Object.keys(schemas.data?.[selectedType]?.fields || {})
+    : [
+        ...new Set(
+          Object.values(schemas.data || {}).flatMap((s) =>
+            Object.keys(s.fields),
+          ),
+        ),
+      ];
+  const rows = (r.data || []).filter(
+    (x) =>
+      (!filter || (filter === "DISABLED" ? !x.enabled : x.action === filter)) &&
+      (x.verifier + " " + x.document + " " + x.field)
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+  );
+  async function save() {
+    if (!edit) return;
+    await action.run(async () => {
+      await api(
+        "/consent/rules" + (edit.id ? "/" + edit.id : ""),
+        edit.id ? "PUT" : "POST",
+        body(edit),
+      );
+      setEdit(undefined);
+    }, "Consent rule saved. Current rules are checked before every disclosure.");
+  }
   return (
-    <div className="max-w-6xl mx-auto pb-12">
-      <div className="mb-8 flex flex-col sm:flex-row justify-between sm:items-end gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Consent Rules</h1>
-          <p className="text-slate-500 text-sm mt-1">Control exactly what each verifier can access.</p>
-        </div>
-        <button 
-          onClick={openModalForNew}
-          className="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors shadow-sm flex items-center shrink-0"
-        >
-          <Plus className="w-4 h-4 mr-1.5" />
-          Add Consent Rule
+    <>
+      <PageHead
+        title="Consent Rules"
+        description="Choose which fields a verifier may receive automatically, must ask for, or cannot receive."
+      >
+        <button className="primary" onClick={() => setEdit({ ...fresh })}>
+          Create rule
         </button>
+      </PageHead>
+      {action.feedback}
+      <div className="notice">
+        An applicable Deny always wins. Otherwise document scope takes priority
+        over credential type, then all credentials; exact verifier and field
+        break ties. Conflicting equal scopes ask you. No rule means Ask me.
       </div>
-      
-      <div className="bg-primary-50 border border-primary-100 rounded-lg p-5 mb-8 flex items-start">
-        <AlertCircle className="w-5 h-5 text-primary-600 shrink-0 mt-0.5 mr-3" />
-        <div>
-          <p className="text-primary-900 text-sm font-medium leading-relaxed">
-            CredVault lets you define how verification requests should be handled automatically. By setting up rules, you can auto-approve frequent KYC requests for trusted banks or automatically deny sensitive data requests.
-          </p>
+      <section className="card">
+        <div className="filters">
+          <Field label="Search rules">
+            <input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+            />
+          </Field>
+          <Field label="Filter action">
+            <select
+              value={filter}
+              onChange={(e) => {
+                setFilter(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All rules</option>
+              <option value="AUTO_APPROVE">Auto-approve</option>
+              <option value="ASK">Ask me</option>
+              <option value="DENY">Deny</option>
+              <option value="DISABLED">Disabled</option>
+            </select>
+          </Field>
         </div>
-      </div>
-
-      <div className="panel overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Verifier</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Document</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Requested Field</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Rule</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Last Updated</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {rules.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-5 py-8 text-center text-slate-500 text-sm">
-                    No consent rules configured. Click "Add Consent Rule" to create one.
-                  </td>
-                </tr>
-              ) : rules.map((rule) => (
-                <tr key={rule.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <span className="text-sm font-bold text-slate-900">{rule.verifier}</span>
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <span className="text-sm font-medium text-slate-700">{rule.documentName}</span>
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <span className="text-sm font-mono text-slate-600 bg-white px-2 py-1 rounded border border-slate-200 capitalize">
-                      {rule.field.replace(/([A-Z])/g, ' $1').trim()}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    {getRuleBadge(rule.rule)}
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap text-sm text-slate-500 font-medium">
-                    {new Date(rule.lastUpdated).toLocaleDateString()}
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap text-right">
-                    <button 
-                      onClick={() => openModalForEdit(rule)}
-                      className="inline-flex items-center text-slate-400 hover:text-primary-600 p-1.5 transition-colors"
-                      title="Edit Rule"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => deleteRule(rule.id)}
-                      className="inline-flex items-center text-slate-400 hover:text-red-600 p-1.5 ml-2 transition-colors"
-                      title="Delete Rule"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-              <h3 className="font-bold text-slate-900 flex items-center">
-                <Shield className="w-4 h-4 mr-2 text-primary-600" />
-                {editingRuleId ? 'Edit Consent Rule' : 'Add Consent Rule'}
-              </h3>
-              <button 
-                onClick={() => setIsModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
+        <ErrorBox
+          message={r.error || docs.error || orgs.error || schemas.error}
+          retry={r.reload}
+        />
+        {r.loading ? (
+          <Loading />
+        ) : rows.length ? (
+          <>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Verifier / scope</th>
+                    <th>Field</th>
+                    <th>Action</th>
+                    <th>Expiry</th>
+                    <th>Controls</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows(rows, page).map((x) => (
+                    <tr key={x.id}>
+                      <td>
+                        <strong>{x.verifier}</strong>
+                        <small>
+                          {x.document}
+                          {x.credential_type
+                            ? " · " + label(x.credential_type)
+                            : ""}
+                        </small>
+                      </td>
+                      <td>{x.field === "*" ? "All fields" : label(x.field)}</td>
+                      <td>
+                        <Status value={x.action} />
+                        <small>
+                          {x.enabled ? "Enabled" : "Disabled"} · v{x.version}
+                        </small>
+                      </td>
+                      <td>
+                        <DateText value={x.expires_at} />
+                      </td>
+                      <td>
+                        <div className="actions">
+                          <button
+                            className="text-button"
+                            disabled={action.busy || r.refreshing}
+                            onClick={() => setEdit({ ...x })}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="text-button"
+                            disabled={action.busy || r.refreshing}
+                            onClick={() =>
+                              void action.run(
+                                () =>
+                                  api("/consent/rules/" + x.id, "PUT", {
+                                    ...body(x),
+                                    enabled: !x.enabled,
+                                  }),
+                                x.enabled ? "Rule disabled" : "Rule enabled",
+                              )
+                            }
+                          >
+                            {x.enabled ? "Disable" : "Enable"}
+                          </button>
+                          <button
+                            className="text-button danger-text"
+                            disabled={action.busy || r.refreshing}
+                            onClick={() => setDeleting(x)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pager page={page} setPage={setPage} total={rows.length} />
+          </>
+        ) : (
+          <Empty>No matching rules. New requests default to Ask me.</Empty>
+        )}
+      </section>
+      {edit && (
+        <Modal
+          title={edit.id ? "Edit consent rule" : "Create consent rule"}
+          onClose={() => setEdit(undefined)}
+        >
+          <Form onSubmit={() => void save()}>
+            <Field label="Verifier">
+              <select
+                value={edit.verifier_id || ""}
+                onChange={(e) =>
+                  setEdit({ ...edit, verifier_id: e.target.value || null })
+                }
               >
-                <X className="w-5 h-5" />
+                <option value="">All approved verifiers</option>
+                {orgs.data
+                  ?.filter((o) => o.kind === "VERIFIER" && o.approved)
+                  .map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+            <Field label="Credential document">
+              <select
+                value={edit.credential_id || ""}
+                onChange={(e) =>
+                  setEdit({
+                    ...edit,
+                    credential_id: e.target.value || null,
+                    credential_type: null,
+                    field: "*",
+                  })
+                }
+              >
+                <option value="">All matching credentials</option>
+                {docs.data
+                  ?.filter((d) => d.issuer_id)
+                  .map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.title}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+            {!edit.credential_id && (
+              <Field label="Credential type">
+                <select
+                  value={edit.credential_type || ""}
+                  onChange={(e) =>
+                    setEdit({
+                      ...edit,
+                      credential_type: e.target.value || null,
+                      field: "*",
+                    })
+                  }
+                >
+                  <option value="">All types</option>
+                  {Object.entries(schemas.data || {}).map(([k, s]) => (
+                    <option key={k} value={k}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            <Field label="Field">
+              <select
+                value={edit.field}
+                onChange={(e) => setEdit({ ...edit, field: e.target.value })}
+              >
+                <option value="*">All fields in scope</option>
+                {fields.map((f) => (
+                  <option key={f} value={f}>
+                    {label(f)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Consent action">
+              <select
+                value={edit.action}
+                onChange={(e) => setEdit({ ...edit, action: e.target.value })}
+              >
+                <option value="AUTO_APPROVE">Auto-approve</option>
+                <option value="ASK">Ask me</option>
+                <option value="DENY">Deny</option>
+              </select>
+            </Field>
+            <Field label="Expiry date (optional, UTC)">
+              <input
+                type="date"
+                value={edit.expires_at?.slice(0, 10) || ""}
+                onChange={(e) =>
+                  setEdit({ ...edit, expires_at: e.target.value || null })
+                }
+              />
+            </Field>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={edit.enabled}
+                onChange={(e) =>
+                  setEdit({ ...edit, enabled: e.target.checked })
+                }
+              />
+              Enabled
+            </label>
+            {action.feedback}
+            <div className="actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setEdit(undefined)}
+              >
+                Cancel
+              </button>
+              <button className="primary" disabled={action.busy}>
+                Save rule
               </button>
             </div>
-            
-            <form onSubmit={handleSave} className="p-6">
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Verifier</label>
-                  <input 
-                    type="text" 
-                    required
-                    className="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-primary-500 focus:ring focus:ring-primary-500/20 outline-none transition-all text-sm"
-                    placeholder="e.g. ABC Technologies"
-                    value={formData.verifier}
-                    onChange={(e) => setFormData({...formData, verifier: e.target.value})}
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Document</label>
-                  <select 
-                    required
-                    className="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-primary-500 focus:ring focus:ring-primary-500/20 outline-none transition-all text-sm bg-white"
-                    value={formData.documentId}
-                    onChange={(e) => {
-                      setFormData({...formData, documentId: e.target.value, field: ''});
-                    }}
-                  >
-                    <option value="" disabled>Select a document</option>
-                    {mockDocuments.map(doc => (
-                      <option key={doc.id} value={doc.id}>{doc.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Field</label>
-                  <select 
-                    required
-                    disabled={!formData.documentId}
-                    className="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-primary-500 focus:ring focus:ring-primary-500/20 outline-none transition-all text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400"
-                    value={formData.field}
-                    onChange={(e) => setFormData({...formData, field: e.target.value})}
-                  >
-                    <option value="" disabled>Select a field</option>
-                    {availableFields.map(field => (
-                      <option key={field} value={field}>{field.replace(/([A-Z])/g, ' $1').trim().replace(/^\w/, c => c.toUpperCase())}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Rule</label>
-                  <select 
-                    required
-                    className="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-primary-500 focus:ring focus:ring-primary-500/20 outline-none transition-all text-sm bg-white"
-                    value={formData.rule}
-                    onChange={(e) => setFormData({...formData, rule: e.target.value as any})}
-                  >
-                    <option value="Auto-Approve">Auto-Approve</option>
-                    <option value="Ask Me">Ask Me</option>
-                    <option value="Deny">Deny</option>
-                  </select>
-                </div>
-              </div>
-              
-              <div className="mt-8 flex justify-end gap-3">
-                <button 
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 rounded-md border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  className="px-4 py-2 rounded-md bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors shadow-sm"
-                >
-                  Save Rule
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+          </Form>
+        </Modal>
       )}
-    </div>
+      {deleting && (
+        <Modal
+          title="Delete consent rule"
+          onClose={() => setDeleting(undefined)}
+        >
+          <p>
+            Requests will use the remaining rules. With no matching rule, they
+            require manual approval.
+          </p>
+          {action.feedback}
+          <button
+            className="danger"
+            disabled={action.busy}
+            onClick={() =>
+              void action.run(async () => {
+                await api(
+                  "/consent/rules/" +
+                    deleting.id +
+                    "?version=" +
+                    deleting.version,
+                  "DELETE",
+                );
+                setDeleting(undefined);
+              }, "Rule deleted")
+            }
+          >
+            Confirm delete
+          </button>
+        </Modal>
+      )}
+    </>
   );
 }

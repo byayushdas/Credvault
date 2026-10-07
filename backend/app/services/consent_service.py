@@ -1,79 +1,70 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from ..models.consent_rule import ConsentRule
-from ..schemas.consent import ConsentRuleCreate
+from sqlalchemy import select
+from ..models import ConsentRule, RequestField, DecisionHistory, now
+from .audit_service import audit
 
-async def create_consent_rule(db: AsyncSession, rule: ConsentRuleCreate, owner_id: int):
-    result = await db.execute(
-        select(ConsentRule).filter(
-            ConsentRule.document_id == rule.document_id,
-            ConsentRule.verifier_id == rule.verifier_id,
-            ConsentRule.field_name == rule.field_name
-        )
-    )
-    existing_rule = result.scalars().first()
-    
-    if existing_rule:
-        existing_rule.action = rule.action
-        await db.commit()
-        await db.refresh(existing_rule)
-        return existing_rule
+def evaluate(db, owner_id, verifier_id, document, field):
+    rules = [r for r in db.scalars(select(ConsentRule).where(ConsentRule.owner_id == owner_id, ConsentRule.enabled.is_(True)))
+        if (not r.expires_at or r.expires_at > now()) and (not r.verifier_id or r.verifier_id == verifier_id)
+        and (not r.credential_id or r.credential_id == document.id)
+        and (not r.credential_type or r.credential_type == document.type) and r.field in (field, '*')]
+    snapshots = [{'id': r.id, 'version': r.version, 'action': r.action} for r in sorted(rules, key=lambda r:r.id)]
+    if any(r.action == 'DENY' for r in rules):
+        return 'DENIED', snapshots
+    if not rules:
+        return 'PENDING', snapshots
+    def specificity(r):
+        return (2 if r.credential_id else 1 if r.credential_type else 0, int(bool(r.verifier_id)), int(r.field != '*'))
+    highest = max(specificity(r) for r in rules)
+    actions = {r.action for r in rules if specificity(r) == highest}
+    return ('APPROVED' if actions == {'AUTO_APPROVE'} else 'PENDING'), snapshots
 
-    db_rule = ConsentRule(
-        owner_id=owner_id,
-        document_id=rule.document_id,
-        verifier_id=rule.verifier_id,
-        field_name=rule.field_name,
-        action=rule.action
-    )
-    db.add(db_rule)
-    await db.commit()
-    await db.refresh(db_rule)
-    return db_rule
+def request_fields(db, req):
+    return list(db.scalars(select(RequestField).where(RequestField.request_id == req.id).order_by(RequestField.field)))
 
-async def get_active_consent_rules(db: AsyncSession, document_id: int, verifier_id: int):
-    result = await db.execute(
-        select(ConsentRule).filter(
-            ConsentRule.document_id == document_id,
-            ConsentRule.verifier_id == verifier_id
-        )
-    )
-    return result.scalars().all()
+def record_decision(db, field):
+    db.add(DecisionHistory(request_id=field.request_id, field=field.field, decision=field.decision,
+        method=field.method, rules=field.rules))
 
-async def evaluate_request(
-    db: AsyncSession,
-    owner_id: int,
-    verifier_id: int,
-    document_id: int,
-    requested_fields: list[str]
-) -> dict:
-    rules = await get_active_consent_rules(db, document_id, verifier_id)
-    rule_map = {r.field_name: r.action.value for r in rules}
-    
-    approved_fields = []
-    ask_fields = []
-    denied_fields = []
-    
-    for field in requested_fields:
-        action = rule_map.get(field)
-        if action == "AUTO_APPROVE":
-            approved_fields.append(field)
-        elif action == "DENY":
-            denied_fields.append(field)
-        else:
-            # Default behavior is ASK
-            ask_fields.append(field)
-            
-    if denied_fields:
-        decision = "DENIED"
-    elif ask_fields:
-        decision = "PENDING"
+def finalize(req, fields):
+    if req.status == 'CANCELLED':
+        return
+    if req.expires_at <= now():
+        req.status = 'EXPIRED'
+    elif any(f.decision == 'PENDING' for f in fields):
+        req.status = 'PENDING'
+    elif all(f.decision == 'APPROVED' for f in fields):
+        req.status = 'APPROVED'
+    elif any(f.decision == 'APPROVED' for f in fields):
+        req.status = 'PARTIAL'
     else:
-        decision = "AUTO_APPROVE"
-        
-    return {
-        "decision": decision,
-        "approved_fields": approved_fields,
-        "ask_fields": ask_fields,
-        "denied_fields": denied_fields
-    }
+        req.status = 'DENIED'
+
+def reconcile(db, req, document, actor):
+    fields = request_fields(db, req)
+    changed = False
+    if req.status in ('CANCELLED', 'EXPIRED'):
+        return fields
+    for field in fields:
+        decision, snapshots = evaluate(db, req.owner_id, req.verifier_id, document, field.field)
+        # Consent tightening applies immediately. Broader changes never resurrect
+        # a denied grant. Manual approvals survive ASK but never an explicit DENY.
+        if snapshots != field.rules:
+            previous = field.decision
+            if field.decision != 'DENIED':
+                if decision == 'DENIED':
+                    field.decision = 'DENIED'
+                    field.method = 'RULE'
+                elif field.method == 'RULE':
+                    field.decision = decision
+            field.rules = snapshots
+            record_decision(db, field)
+            changed = True
+            if previous != field.decision:
+                field.decided_at = now()
+    old_status = req.status
+    finalize(req, fields)
+    if changed or old_status != req.status:
+        req.revision += 1
+        audit(db, actor, 'CONSENT_REEVALUATED', req.owner_id, document.id, req.id,
+            [f.field for f in fields], outcome=req.status, method='RULE')
+    return fields

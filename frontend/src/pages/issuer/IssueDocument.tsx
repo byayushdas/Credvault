@@ -1,246 +1,500 @@
-import { useState } from 'react';
-import { Shield, FileKey, CheckCircle2, User, FileText, FileCheck, ArrowRight, Check } from 'lucide-react';
-import { Link } from 'react-router-dom';
-
-const DOCUMENT_TYPES = [
-  'Government Identity',
-  'PAN',
-  'Passport',
-  'Driving Licence',
-  'Degree Certificate',
-  'Marksheet'
-];
-
-export default function IssueDocument() {
-  const [step, setStep] = useState(1);
-  const [isSuccess, setIsSuccess] = useState(false);
-
-  // Form State
-  const [docType, setDocType] = useState('');
-  const [ownerName, setOwnerName] = useState('');
-  const [ownerDid, setOwnerDid] = useState('');
-  
-  // Just dummy state for step 3
-  const [fields, setFields] = useState(''); 
-
-  const handleNext = () => setStep(s => Math.min(s + 1, 5));
-  const handleBack = () => setStep(s => Math.max(s - 1, 1));
-  
-  const handleIssue = () => {
-    setIsSuccess(true);
+import { useState, useEffect } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { api, fileContent, label } from "../../services/api";
+import type { Doc, Schema } from "../../services/api";
+import { useResource } from "../../services/session";
+import {
+  PageHead,
+  Field,
+  Form,
+  useAction,
+  DateText,
+  ErrorBox,
+} from "../../components/common/UI";
+interface IssueData {
+  owner_id: string;
+  title: string;
+  type: string;
+  claims: Record<string, string | number | boolean>;
+  issued_at: string;
+  expires_at: string | null;
+  attachment?: { content: string };
+  replaces_id?: string;
+  draft_id?: string;
+}
+interface Draft {
+  id: string;
+  updated_at: string;
+  data: IssueData;
+}
+function educationData(data: IssueData): IssueData {
+  if (data.type !== "DEGREE") return data;
+  return {
+    ...data,
+    claims: Object.fromEntries(
+      Object.entries(data.claims).filter(([name]) => name !== "cgpa"),
+    ),
   };
-
-  if (isSuccess) {
-    return (
-      <div className="max-w-2xl mx-auto py-12">
-        <div className="panel p-12 text-center animate-in fade-in zoom-in-95 duration-300">
-          <div className="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6">
-            <CheckCircle2 className="w-12 h-12" />
-          </div>
-          <h2 className="text-3xl font-bold text-slate-900 mb-2">Credential Issued Successfully</h2>
-          <p className="text-slate-500 mb-8">The document has been cryptographically signed and sent to the user's vault.</p>
-
-          <div className="max-w-xs mx-auto bg-slate-50 border border-slate-200 rounded-lg p-5 text-left mb-8 space-y-3">
-            <div className="flex items-center text-sm font-medium text-slate-700">
-              <Check className="w-5 h-5 text-emerald-500 mr-3" /> Digitally Signed
-            </div>
-            <div className="flex items-center text-sm font-medium text-slate-700">
-              <Check className="w-5 h-5 text-emerald-500 mr-3" /> Issuer Verified
-            </div>
-            <div className="flex items-center text-sm font-medium text-slate-700">
-              <Check className="w-5 h-5 text-emerald-500 mr-3" /> Ready for Vault
-            </div>
-          </div>
-
-          <div className="flex gap-4 justify-center">
-            <Link to="/issuer/dashboard" className="px-6 py-2.5 rounded-md border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 transition-colors">
-              Go to Dashboard
-            </Link>
-            <button 
-              onClick={() => { setIsSuccess(false); setStep(1); setDocType(''); setOwnerName(''); }}
-              className="px-6 py-2.5 rounded-md bg-primary-600 text-white font-semibold hover:bg-primary-700 transition-colors"
-            >
-              Issue Another
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+}
+export default function IssueDocument() {
+  const [params] = useSearchParams(),
+    navigate = useNavigate(),
+    schemas = useResource<Record<string, Schema>>("/schemas"),
+    drafts = useResource<Draft[]>("/issuer/drafts"),
+    action = useAction();
+  const [data, setData] = useState<IssueData>(() => ({
+    owner_id: "",
+    title: "",
+    type: "GENERAL",
+    claims: {},
+    issued_at: new Date().toISOString().slice(0, 16),
+    expires_at: null,
+    ...(params.get("replace") ? { replaces_id: params.get("replace")! } : {}),
+  }));
+  const [review, setReview] = useState(false),
+    [draftId, setDraftId] = useState<string>(() => crypto.randomUUID()),
+    [key, setKey] = useState<string>(() => crypto.randomUUID()),
+    [attachmentName, setAttachmentName] = useState(""),
+    [loadError, setLoadError] = useState("");
+  const [savedDraft, setSavedDraft] = useState(false);
+  const [confirmedOwner, setConfirmedOwner] = useState("");
+  const replacement = params.get("replace");
+  useEffect(() => {
+    if (!replacement) return;
+    let active = true;
+    api<Doc>("/documents/" + replacement)
+      .then((d) => {
+        if (active)
+          setData((v) =>
+            educationData({
+              ...v,
+              owner_id: d.owner_id,
+              title: d.title,
+              type: d.type,
+              claims: d.claims || {},
+              replaces_id: d.id,
+            }),
+          );
+      })
+      .catch((e) => setLoadError(e.message));
+    return () => {
+      active = false;
+    };
+  }, [replacement]);
+  const fields = Object.fromEntries(
+    Object.entries(schemas.data?.[data.type]?.fields || {}).filter(
+      ([name]) => data.type !== "DEGREE" || name !== "cgpa",
+    ),
+  );
+  const attachmentContent = data.attachment?.content || "";
+  const fileType = attachmentContent.startsWith("iVBORw0KGgo")
+    ? "image/png"
+    : attachmentContent.startsWith("/9j/")
+      ? "image/jpeg"
+      : attachmentContent.startsWith("JVBERi0")
+        ? "application/pdf"
+        : null;
+  const [attachmentPreview, setAttachmentPreview] = useState<string | null>(null);
+  useEffect(() => {
+    if (!fileType || !attachmentContent) {
+      setAttachmentPreview(null);
+      return;
+    }
+    try {
+      const bin = atob(attachmentContent);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([arr], { type: fileType }));
+      setAttachmentPreview(url);
+      return () => URL.revokeObjectURL(url);
+    } catch {
+      setAttachmentPreview(null);
+    }
+  }, [fileType, attachmentContent]);
+  function update<K extends keyof IssueData>(key: K, value: IssueData[K]) {
+    setData((d) => ({ ...d, [key]: value }));
   }
-
+  async function saveDraft() {
+    await action.run(async () => {
+      await api("/issuer/drafts/" + draftId, "PUT", educationData(data));
+      setSavedDraft(true);
+    }, "Encrypted draft saved.");
+  }
+  async function issue() {
+    await action.run(async () => {
+      const payload = {
+        ...educationData(data),
+        ...(savedDraft ? { draft_id: draftId } : {}),
+      };
+      const doc = await api<Doc>("/issuer/documents", "POST", payload, key);
+      navigate("/issuer/documents/" + doc.id);
+    }, "Signed credential issued");
+  }
+  async function reviewCredential() {
+    await action.run(async () => {
+      const recipient = await api<{ vault_id: string }>(
+        "/owners/confirm?vault_id=" + encodeURIComponent(data.owner_id),
+      );
+      setConfirmedOwner(recipient.vault_id);
+      setReview(true);
+    }, "Recipient vault confirmed");
+  }
+  function loadDraft(d: Draft) {
+    setData(educationData(d.data));
+    setDraftId(d.id);
+    setSavedDraft(true);
+    setKey(crypto.randomUUID());
+    setReview(false);
+    setAttachmentName(d.data.attachment ? "Saved attachment" : "");
+  }
   return (
-    <div className="max-w-4xl mx-auto pb-12">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">Issue New Credential</h1>
-        <p className="text-slate-500 text-sm mt-1">Create and securely sign a verifiable credential.</p>
-      </div>
-
-      {/* Stepper */}
-      <div className="flex items-center justify-between mb-8 relative">
-        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-0.5 bg-slate-200 -z-10"></div>
-        <div className="absolute left-0 top-1/2 -translate-y-1/2 h-0.5 bg-primary-600 -z-10 transition-all duration-300" style={{ width: `${((step - 1) / 4) * 100}%` }}></div>
-        
-        {[
-          { num: 1, label: 'Document Type', icon: FileText },
-          { num: 2, label: 'Owner Details', icon: User },
-          { num: 3, label: 'Document Fields', icon: FileCheck },
-          { num: 4, label: 'Review', icon: FileKey },
-          { num: 5, label: 'Sign & Issue', icon: Shield },
-        ].map((s) => (
-          <div key={s.num} className="flex flex-col items-center">
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border-2 transition-colors ${
-              step > s.num ? 'bg-primary-600 border-primary-600 text-white' : 
-              step === s.num ? 'bg-white border-primary-600 text-primary-600 ring-4 ring-primary-50' : 
-              'bg-white border-slate-300 text-slate-400'
-            }`}>
-              {step > s.num ? <Check className="w-5 h-5" /> : s.num}
-            </div>
-            <span className={`text-xs font-bold mt-2 hidden sm:block ${step >= s.num ? 'text-slate-900' : 'text-slate-400'}`}>
-              {s.label}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <div className="panel p-8 min-h-[400px] flex flex-col">
-        <div className="flex-1">
-          {step === 1 && (
-            <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-              <h2 className="text-xl font-bold text-slate-900 mb-6">Select Document Type</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {DOCUMENT_TYPES.map(type => (
-                  <button 
-                    key={type}
-                    onClick={() => { setDocType(type); handleNext(); }}
-                    className={`p-4 rounded-lg border-2 text-left transition-all ${
-                      docType === type ? 'border-primary-600 bg-primary-50' : 'border-slate-200 hover:border-primary-300 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span className="font-semibold text-slate-900">{type}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div className="animate-in fade-in slide-in-from-right-4 duration-300 max-w-md mx-auto">
-              <h2 className="text-xl font-bold text-slate-900 mb-6 text-center">Enter Owner Details</h2>
-              <div className="space-y-5">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Owner Full Name</label>
-                  <input 
-                    type="text" 
-                    className="w-full px-4 py-2.5 rounded-md border border-slate-300 focus:border-primary-500 focus:ring focus:ring-primary-500/20 outline-none transition-all text-sm"
-                    placeholder="e.g. John Doe"
-                    value={ownerName}
-                    onChange={e => setOwnerName(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Owner Vault DID (Optional)</label>
-                  <input 
-                    type="text" 
-                    className="w-full px-4 py-2.5 rounded-md border border-slate-300 focus:border-primary-500 focus:ring focus:ring-primary-500/20 outline-none transition-all text-sm font-mono"
-                    placeholder="did:credvault:owner:..."
-                    value={ownerDid}
-                    onChange={e => setOwnerDid(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {step === 3 && (
-            <div className="animate-in fade-in slide-in-from-right-4 duration-300 max-w-md mx-auto">
-              <h2 className="text-xl font-bold text-slate-900 mb-6 text-center">Enter Document Fields</h2>
-              <p className="text-sm text-slate-500 mb-4 text-center">Entering standard fields for {docType}.</p>
-              
-              <div className="space-y-4">
-                {/* Generic Mock Fields based on type */}
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Primary Identifier</label>
-                  <input type="text" className="w-full px-4 py-2.5 rounded-md border border-slate-300 focus:border-primary-500 outline-none text-sm" placeholder="e.g. ID Number or Roll Number" onChange={e => setFields(e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Date of Issue</label>
-                  <input type="date" className="w-full px-4 py-2.5 rounded-md border border-slate-300 focus:border-primary-500 outline-none text-sm" defaultValue={new Date().toISOString().split('T')[0]} />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {step === 4 && (
-            <div className="animate-in fade-in slide-in-from-right-4 duration-300 max-w-md mx-auto">
-              <h2 className="text-xl font-bold text-slate-900 mb-6 text-center">Review Details</h2>
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-5 space-y-4">
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Document Type</p>
-                  <p className="font-medium text-slate-900">{docType}</p>
-                </div>
-                <div className="w-full h-px bg-slate-200"></div>
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Recipient</p>
-                  <p className="font-medium text-slate-900">{ownerName || 'Not specified'}</p>
-                  {ownerDid && <p className="text-xs font-mono text-slate-500 mt-1">{ownerDid}</p>}
-                </div>
-                <div className="w-full h-px bg-slate-200"></div>
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Data Fields</p>
-                  <p className="font-medium text-slate-900">Primary Identifier: {fields || 'Not specified'}</p>
-                  <p className="font-medium text-slate-900">Issue Date: {new Date().toLocaleDateString()}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {step === 5 && (
-            <div className="animate-in fade-in slide-in-from-right-4 duration-300 max-w-md mx-auto text-center">
-              <div className="w-16 h-16 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center mx-auto mb-6">
-                <Shield className="w-8 h-8" />
-              </div>
-              <h2 className="text-xl font-bold text-slate-900 mb-2">Sign & Issue</h2>
-              <p className="text-sm text-slate-500 mb-8">You are about to cryptographically sign this credential and issue it to the user's vault.</p>
-              
-              <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-4 mb-8">
-                <p className="text-emerald-800 font-semibold flex items-center justify-center">
-                  <CheckCircle2 className="w-5 h-5 mr-2 text-emerald-600" />
-                  Digital Signature: Valid
-                </p>
-                <p className="text-xs text-emerald-600 mt-1">Ready for cryptographic seal</p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer Actions */}
-        <div className="mt-8 pt-6 border-t border-slate-100 flex justify-between items-center">
-          <button 
-            onClick={handleBack}
-            disabled={step === 1}
-            className="px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 rounded-md transition-colors"
+    <>
+      <PageHead
+        title={
+          replacement ? "Create replacement credential" : "Issue Credential"
+        }
+        description="Issue immutable claims to an exact owner reference. Drafts remain editable until issuance."
+      />
+      <ErrorBox message={loadError || schemas.error} retry={schemas.reload} />
+      {action.feedback}
+      <div className="issue-grid">
+        <section className="card">
+          <h2>{review ? "Review before signing" : "Credential information"}</h2>
+          <Form
+            onSubmit={() => (review ? void issue() : void reviewCredential())}
           >
-            Back
-          </button>
-          
-          {step < 5 ? (
-            <button 
-              onClick={handleNext}
-              disabled={(step === 1 && !docType) || (step === 2 && !ownerName)}
-              className="px-6 py-2 bg-primary-600 text-white text-sm font-semibold rounded-md shadow-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary-700 transition-colors flex items-center"
-            >
-              Next Step <ArrowRight className="w-4 h-4 ml-1.5" />
-            </button>
+            {!review ? (
+              <>
+                <div className="form-grid">
+                  <Field label="Owner vault ID">
+                    <input
+                      required
+                      pattern="[0-9a-fA-F-]{36}"
+                      value={data.owner_id}
+                      onChange={(e) =>
+                        update("owner_id", e.target.value.trim())
+                      }
+                    />
+                  </Field>
+                  <Field label="Credential type">
+                    <select
+                      value={data.type}
+                      onChange={(e) => {
+                        update("type", e.target.value);
+                        update("claims", {});
+                      }}
+                    >
+                      {Object.entries(schemas.data || {}).map(([k, s]) => (
+                        <option key={k} value={k}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <Field label="Title">
+                  <input
+                    required
+                    minLength={3}
+                    maxLength={160}
+                    value={data.title}
+                    onChange={(e) => update("title", e.target.value)}
+                  />
+                </Field>
+                <div className="form-grid">
+                  {Object.entries(fields).map(([k, s]) => (
+                    <Field label={s.label} key={k}>
+                      {s.type === "boolean" ? (
+                        <select
+                          required
+                          value={
+                            data.claims[k] === undefined
+                              ? ""
+                              : String(data.claims[k])
+                          }
+                          onChange={(e) =>
+                            update("claims", {
+                              ...data.claims,
+                              [k]: e.target.value === "true",
+                            })
+                          }
+                        >
+                          <option value="">Choose assessment…</option>
+                          <option value="true">Yes — 18 or older</option>
+                          <option value="false">No — below 18</option>
+                        </select>
+                      ) : (
+                        <input
+                          required
+                          type={
+                            s.type === "number"
+                              ? "number"
+                              : s.type === "date"
+                                ? "date"
+                                : "text"
+                          }
+                          min={s.type === "number" ? 0 : undefined}
+                          max={
+                            s.type === "number"
+                              ? k === "cgpa"
+                                ? 10
+                                : k === "semester"
+                                  ? 20
+                                  : 100
+                              : undefined
+                          }
+                          maxLength={300}
+                          step={
+                            s.type === "number"
+                              ? k === "semester"
+                                ? 1
+                                : "0.01"
+                              : undefined
+                          }
+                          value={String(data.claims[k] ?? "")}
+                          onChange={(e) =>
+                            update("claims", {
+                              ...data.claims,
+                              [k]:
+                                s.type === "number"
+                                  ? Number(e.target.value)
+                                  : e.target.value,
+                            })
+                          }
+                        />
+                      )}
+                    </Field>
+                  ))}
+                </div>
+                {data.type === "AGE" && (
+                  <p className="notice">
+                    Attest to the threshold after your organisation's
+                    assessment. No birth date is stored. Age claims must expire
+                    within 365 days of assessment.
+                  </p>
+                )}
+                <div className="form-grid">
+                  <Field label="Issue date and time (UTC)">
+                    <input
+                      required
+                      type="datetime-local"
+                      value={data.issued_at.slice(0, 16)}
+                      onChange={(e) => update("issued_at", e.target.value)}
+                    />
+                  </Field>
+                  <Field
+                    label="Expiry date and time (UTC)"
+                    hint={
+                      data.type === "AGE"
+                        ? "Required for age attestations."
+                        : "Optional — leave blank for no expiry."
+                    }
+                  >
+                    <input
+                      required={data.type === "AGE"}
+                      type="datetime-local"
+                      value={data.expires_at?.slice(0, 16) || ""}
+                      onChange={(e) =>
+                        update("expires_at", e.target.value || null)
+                      }
+                    />
+                  </Field>
+                </div>
+                <section
+                  className="credential-upload"
+                  aria-labelledby="credential-upload-title"
+                >
+                  <h3 id="credential-upload-title">Upload credential image</h3>
+                  <p className="muted">
+                    Attach a scan or photo of the certificate. It will be saved
+                    with the signed credential in the owner's vault.
+                  </p>
+                  <Field
+                    label="Attachment (optional)"
+                    hint="One PNG or JPEG image, or a PDF · up to 10 MB"
+                  >
+                    <input
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                      disabled={action.busy}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (file)
+                          void action.run(async () => {
+                            const attachment = await fileContent(file);
+                            if (
+                              !attachment.content.startsWith("iVBORw0KGgo") &&
+                              !attachment.content.startsWith("/9j/") &&
+                              !attachment.content.startsWith("JVBERi0")
+                            )
+                              throw new Error(
+                                "Choose a PNG or JPEG image, or a PDF.",
+                              );
+                            update("attachment", attachment);
+                            setAttachmentName(file.name);
+                          }, "Attachment ready for review");
+                      }}
+                    />
+                  </Field>
+                  {attachmentPreview && fileType === "application/pdf" ? (
+                    <iframe
+                      className="credential-image-preview"
+                      src={attachmentPreview}
+                      title="Selected credential attachment"
+                    />
+                  ) : attachmentPreview ? (
+                    <img
+                      className="credential-image-preview"
+                      src={attachmentPreview}
+                      alt="Selected credential attachment"
+                    />
+                  ) : null}
+                  {attachmentName && (
+                    <p>
+                      {attachmentName}{" "}
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => {
+                          update("attachment", undefined);
+                          setAttachmentName("");
+                        }}
+                      >
+                        Remove attachment
+                      </button>
+                    </p>
+                  )}
+                </section>
+              </>
+            ) : (
+              <>
+                <dl className="claim-list">
+                  <div>
+                    <dt>Title</dt>
+                    <dd>{data.title}</dd>
+                  </div>
+                  <div>
+                    <dt>Owner</dt>
+                    <dd>
+                      <code>{data.owner_id}</code>
+                      {confirmedOwner === data.owner_id && (
+                        <small>
+                          Confirmed active owner vault. No private profile was
+                          disclosed.
+                        </small>
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Type</dt>
+                    <dd>{schemas.data?.[data.type]?.label}</dd>
+                  </div>
+                  {Object.entries(data.claims).map(([k, v]) => (
+                    <div key={k}>
+                      <dt>{label(k)}</dt>
+                      <dd>{String(v)}</dd>
+                    </div>
+                  ))}
+                  <div>
+                    <dt>Issued</dt>
+                    <dd>{data.issued_at}</dd>
+                  </div>
+                  <div>
+                    <dt>Expires</dt>
+                    <dd>{data.expires_at || "No expiry"}</dd>
+                  </div>
+                  <div>
+                    <dt>Attachment</dt>
+                    <dd>{attachmentName || "None"}</dd>
+                  </div>
+                </dl>
+                {attachmentPreview && (
+                  <img
+                    className="credential-image-preview"
+                    src={attachmentPreview}
+                    alt="Credential attachment to be issued"
+                  />
+                )}
+                <p className="notice">
+                  Confirming signs and encrypts this credential, records
+                  issuance and delivers it to the owner's vault. Corrections
+                  require a replacement version.
+                </p>
+              </>
+            )}
+            <div className="form-footer">
+              <div className="actions">
+                {review ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setReview(false)}
+                  >
+                    Back to edit
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={action.busy}
+                    onClick={() => void saveDraft()}
+                  >
+                    Save draft
+                  </button>
+                )}
+                <Link to="/issuer/documents">Cancel</Link>
+              </div>
+              <button
+                className="primary"
+                disabled={action.busy || !schemas.data}
+              >
+                {action.busy
+                  ? "Saving…"
+                  : review
+                    ? "Confirm and issue"
+                    : "Review credential"}
+              </button>
+            </div>
+          </Form>
+        </section>
+        <aside className="card drafts">
+          <h2>Saved drafts</h2>
+          <p className="muted">
+            Encrypted and visible to your issuer organisation.
+          </p>
+          <ErrorBox message={drafts.error} retry={drafts.reload} />
+          {drafts.data?.length ? (
+            drafts.data.map((d) => (
+              <div className="draft" key={d.id}>
+                <strong>{d.data.title || "Untitled draft"}</strong>
+                <small>
+                  <DateText value={d.updated_at} />
+                </small>
+                <div className="actions">
+                  <button className="text-button" onClick={() => loadDraft(d)}>
+                    Edit draft
+                  </button>
+                  <button
+                    className="text-button danger-text"
+                    disabled={action.busy}
+                    onClick={() =>
+                      void action.run(async () => {
+                        await api("/issuer/drafts/" + d.id, "DELETE");
+                        if (d.id === draftId) setSavedDraft(false);
+                      }, "Draft deleted")
+                    }
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))
           ) : (
-            <button 
-              onClick={handleIssue}
-              className="px-6 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-md shadow-sm hover:bg-slate-800 transition-colors flex items-center animate-pulse"
-            >
-              <Shield className="w-4 h-4 mr-1.5" /> Confirm & Issue
-            </button>
+            <p>No drafts saved.</p>
           )}
-        </div>
+        </aside>
       </div>
-    </div>
+    </>
   );
 }

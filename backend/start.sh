@@ -1,21 +1,4 @@
-#!/bin/bash
-
-# Navigate to the script's directory
-cd "$(dirname "$0")"
-
-# Create virtual environment if it doesn't exist
-if [ ! -d "venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv venv
-fi
-
-# Activate virtual environment
-source venv/bin/activate
-
-# Install dependencies
-echo "Installing dependencies..."
-pip install -r requirements.txt
-
-# Start the FastAPI server
-echo "Starting FastAPI server on http://localhost:8000..."
-uvicorn app.main:app --reload
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec node scripts/manage.mjs dev

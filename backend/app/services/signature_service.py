@@ -1,69 +1,50 @@
-import json
 import base64
-import os
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives import serialization, hashes
-from ..core.config import settings
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+from cryptography.exceptions import InvalidSignature
+from ..models import IssuerKey, uid, now
+from .encryption_service import canonical, encrypt_bytes, decrypt_bytes
 
-def ensure_keys_exist():
-    os.makedirs(os.path.dirname(settings.PRIVATE_KEY_PATH), exist_ok=True)
-    if not os.path.exists(settings.PRIVATE_KEY_PATH) or not os.path.exists(settings.PUBLIC_KEY_PATH):
-        priv_pem, pub_pem = generate_key_pair()
-        with open(settings.PRIVATE_KEY_PATH, "w") as f:
-            f.write(priv_pem)
-        with open(settings.PUBLIC_KEY_PATH, "w") as f:
-            f.write(pub_pem)
+def create_key(db, organization_id):
+    private = Ed25519PrivateKey.generate()
+    kid = uid()
+    key = IssuerKey(id=kid, organization_id=organization_id,
+        public_key=private.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode(),
+        private_encrypted=encrypt_bytes(private.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption()), 'signing:' + kid))
+    db.add(key)
+    db.flush()
+    return key
 
-def generate_key_pair():
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    public_key = private_key.public_key()
-    
-    priv_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption()
-    )
-    
-    pub_pem = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo
-    )
-    return priv_pem.decode('utf-8'), pub_pem.decode('utf-8')
+def sign(key, payload):
+    private = Ed25519PrivateKey.from_private_bytes(decrypt_bytes(key.private_encrypted, 'signing:' + key.id))
+    return base64.b64encode(private.sign(canonical(payload))).decode()
 
-def get_private_key():
-    ensure_keys_exist()
-    with open(settings.PRIVATE_KEY_PATH, "rb") as f:
-        return serialization.load_pem_private_key(f.read(), password=None)
-
-def sign_data(data: dict) -> str:
-    private_key = get_private_key()
-    data_str = json.dumps(data, sort_keys=True)
-    
-    signature = private_key.sign(
-        data_str.encode('utf-8'),
-        padding.PSS(
-            mgf=padding.MGF1(hashes.SHA256()),
-            salt_length=padding.PSS.MAX_LENGTH
-        ),
-        hashes.SHA256()
-    )
-    return base64.b64encode(signature).decode('utf-8')
-
-def verify_signature(data: dict, signature_b64: str, public_key_pem: str) -> bool:
+def verify(public_key, payload, signature):
     try:
-        public_key = serialization.load_pem_public_key(public_key_pem.encode('utf-8'))
-        signature = base64.b64decode(signature_b64)
-        data_str = json.dumps(data, sort_keys=True)
-        
-        public_key.verify(
-            signature,
-            data_str.encode('utf-8'),
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH
-            ),
-            hashes.SHA256()
-        )
+        serialization.load_pem_public_key(public_key.encode()).verify(base64.b64decode(signature, validate=True), canonical(payload))
         return True
-    except Exception:
+    except (ValueError, TypeError, InvalidSignature):
         return False
+
+def context(document):
+    return {'format': 'CredVault-claim-v' + str(document.proof_version or 1), 'credential_id': document.id, 'owner_id': document.owner_id,
+        'issuer_id': document.issuer_id, 'key_id': document.key_id, 'version': document.version,
+        'credential_type': document.type, 'issued_at': document.issued_at, 'expires_at': document.expires_at,
+        **({'assessment_date':document.assessment_date} if document.assessment_date else {}),
+        **({'signed_at':document.created_at} if document.proof_version == 2 else {})}
+
+def claim_payload(document, field, value):
+    return {**context(document), 'field': field, 'value': value}
+
+def manifest(document, claims):
+    return {**context(document), 'format': 'CredVault-record-v' + str(document.proof_version or 1), 'title': document.title,
+        'category': document.category, 'claims': claims, 'file_hash': document.file_hash,
+        'replaces_id': document.replaces_id}
+
+def key_trusted(db, document):
+    from ..models import Organization
+    key = db.get(IssuerKey, document.key_id) if document.key_id else None
+    org = db.get(Organization, document.issuer_id) if document.issuer_id else None
+    trusted = bool(key and org and org.approved and not key.revoked_at and key.organization_id == document.issuer_id
+        and key.valid_from <= document.created_at and (not key.valid_until or document.created_at < key.valid_until))
+    return key, trusted

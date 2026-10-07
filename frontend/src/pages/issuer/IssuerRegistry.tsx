@@ -1,77 +1,186 @@
-import { ShieldCheck, CheckCircle2, Shield, Search } from 'lucide-react';
-
-const REGISTRY = [
-  { id: 1, name: 'Government Identity Authority — Demo', category: 'Government', status: 'Active', pubKey: '0x8f3c...9a21' },
-  { id: 2, name: 'Ministry of External Affairs — Demo', category: 'Government', status: 'Active', pubKey: '0x1e9b...4c11' },
-  { id: 3, name: 'XYZ University', category: 'Education', status: 'Active', pubKey: '0x5a2f...8b00' },
-  { id: 4, name: 'ABC Training Institute', category: 'Education', status: 'Active', pubKey: '0x9c4e...1f22' }
-];
-
+import { useState } from "react";
+import { api } from "../../services/api";
+import type { Org } from "../../services/api";
+import { useResource, useSession } from "../../services/session";
+import {
+  PageHead,
+  DateText,
+  Status,
+  ErrorBox,
+  Field,
+  Form,
+  useAction,
+  Modal,
+} from "../../components/common/UI";
+interface Client {
+  id: string;
+  name: string;
+  scopes: string;
+  revoked: boolean;
+}
 export default function IssuerRegistry() {
+  const { user, restore } = useSession(),
+    r = useResource<Org[]>("/registry"),
+    clients = useResource<Client[]>(
+      user!.role === "VERIFIER" ? "/oauth/clients" : null,
+    ),
+    action = useAction(),
+    [name, setName] = useState(user!.organization?.name || ""),
+    [revoke, setRevoke] = useState<Client>();
   return (
-    <div className="max-w-6xl mx-auto pb-12">
-      <div className="mb-8 flex flex-col sm:flex-row justify-between sm:items-end gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Registered Issuers</h1>
-          <p className="text-slate-500 text-sm mt-1">Directory of cryptographically verified credential issuers on the network.</p>
-        </div>
-        <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input 
-            type="text" 
-            placeholder="Search registry..." 
-            className="pl-9 pr-4 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:border-primary-500 w-full sm:w-64"
-          />
-        </div>
-      </div>
-
-      <div className="panel overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Issuer Name</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Category</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Verification</th>
-                <th className="px-5 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Public Key Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {REGISTRY.map((issuer) => (
-                <tr key={issuer.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 rounded bg-white border border-slate-200 flex items-center justify-center text-primary-600 mr-3">
-                        <Shield className="w-4 h-4" />
-                      </div>
-                      <span className="text-sm font-bold text-slate-900">{issuer.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <span className="text-sm text-slate-600 font-medium">{issuer.category}</span>
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <span className="px-2 py-1 bg-slate-100 text-slate-700 rounded text-xs font-bold">{issuer.status}</span>
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <span className="badge-success px-2 py-1 rounded text-xs font-bold flex items-center w-fit">
-                      <ShieldCheck className="w-3 h-3 mr-1" />
-                      Verified
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 whitespace-nowrap">
-                    <span className="text-sm font-mono text-slate-500 flex items-center">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500 mr-1.5" />
-                      {issuer.pubKey}
-                    </span>
-                  </td>
-                </tr>
+    <>
+      <PageHead
+        title={
+          user!.role === "ISSUER"
+            ? "Organisation / Registry"
+            : "Organisation / API Access"
+        }
+        description="Organisation approval and key management are controlled by the local administrator."
+      />
+      <section className="card form-card">
+        <h2>Your organisation</h2>
+        <p className="muted">
+          Companies, hospitals, universities, government agencies and other
+          organisations can issue or verify credentials here.
+        </p>
+        <Form
+          onSubmit={() =>
+            void action.run(async () => {
+              await api("/organization", "PUT", { name });
+              await restore();
+            }, "Organisation updated")
+          }
+        >
+          <Field label="Organisation display name">
+            <input
+              required
+              minLength={3}
+              maxLength={160}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+          {action.feedback}
+          <button
+            className="primary"
+            disabled={action.busy || name === user!.organization?.name}
+          >
+            Save organisation
+          </button>
+        </Form>
+      </section>
+      {user!.role === "VERIFIER" && (
+        <section className="card">
+          <h2>OAuth2 API clients</h2>
+          <p>
+            Use the documented local administrator command to provision a
+            confidential client. Its secret stays in a private server-side file.
+            Access tokens expire after 10 minutes.
+          </p>
+          <ErrorBox message={clients.error} retry={clients.reload} />
+          {clients.data?.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Client</th>
+                    <th>Scopes</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clients.data.map((c) => (
+                    <tr key={c.id}>
+                      <td>
+                        {c.name}
+                        <small>
+                          <code>{c.id}</code>
+                        </small>
+                      </td>
+                      <td>{c.scopes}</td>
+                      <td>
+                        <Status value={c.revoked ? "REVOKED" : "VALID"} />
+                      </td>
+                      <td>
+                        <button
+                          className="secondary"
+                          disabled={c.revoked}
+                          onClick={() => setRevoke(c)}
+                        >
+                          Revoke client
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p>
+              No API clients provisioned. Browser verification remains
+              available.
+            </p>
+          )}
+        </section>
+      )}
+      <section className="card">
+        <h2>Issuer registry</h2>
+        <p className="muted">
+          Public keys are retained for historical signature checks. A revoked
+          key blocks future disclosure of every credential it signed.
+        </p>
+        <ErrorBox message={r.error} retry={r.reload} />
+        {r.data
+          ?.filter((o) => o.kind === "ISSUER")
+          .map((o) => (
+            <div key={o.id} className="registry-entry">
+              <div className="section-head">
+                <h3>{o.name}</h3>
+                <Status value={o.approved ? "APPROVED" : "PENDING"} />
+              </div>
+              <code>{o.id}</code>
+              {o.keys.map((k) => (
+                <details key={k.id}>
+                  <summary>
+                    Key {k.id} ·{" "}
+                    {k.revoked_at
+                      ? "Revoked"
+                      : k.valid_until
+                        ? "Retired"
+                        : "Active"}
+                  </summary>
+                  <p>
+                    Valid from <DateText value={k.valid_from} /> · Until{" "}
+                    <DateText value={k.valid_until} />
+                  </p>
+                  <pre>{k.public_key}</pre>
+                </details>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+            </div>
+          ))}
+      </section>
+      {revoke && (
+        <Modal title="Revoke API client" onClose={() => setRevoke(undefined)}>
+          <p>
+            The client and all of its issued access tokens will stop working
+            immediately.
+          </p>
+          {action.feedback}
+          <button
+            className="danger"
+            disabled={action.busy}
+            onClick={() =>
+              void action.run(async () => {
+                await api("/oauth/clients/" + revoke.id + "/revoke", "POST");
+                setRevoke(undefined);
+              }, "Client revoked")
+            }
+          >
+            Confirm revocation
+          </button>
+        </Modal>
+      )}
+    </>
   );
 }

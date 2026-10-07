@@ -1,295 +1,457 @@
-import { useState } from 'react';
-import { mockConsentRequests, mockDocuments } from '../../data/mockData';
-import type { ConsentRequest } from '../../data/mockData';
-import { getData, setData } from '../../services/localStorageService';
-import { Check, X, Building, Lock, CheckCircle2, ShieldAlert, Clock } from 'lucide-react';
-
-export default function ConsentRequests() {
-  const [requests, setRequests] = useState<ConsentRequest[]>(() => getData('requests', mockConsentRequests));
-  const [selectedRequest, setSelectedRequest] = useState<ConsentRequest | null>(null);
-  const [modalMode, setModalMode] = useState<'prompt' | 'success'>('prompt');
-
-  const pendingCount = requests.filter(r => r.status === 'Pending').length;
-  const approvedCount = requests.filter(r => r.status === 'Approved').length;
-  const deniedCount = requests.filter(r => r.status === 'Denied').length;
-
-  const handleAction = (id: string, action: 'Approved' | 'Denied') => {
-    const newRequests = requests.map(req => req.id === id ? { ...req, status: action } : req);
-    setRequests(newRequests);
-    setData('requests', newRequests);
-    
-    if (action === 'Approved') {
-      setModalMode('success');
-    } else {
-      setSelectedRequest(null);
-    }
-  };
-
-  const closeSuccess = () => {
-    setSelectedRequest(null);
-    setModalMode('prompt');
-  };
-
-  return (
-    <div className="max-w-6xl mx-auto pb-12">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">Verification Requests</h1>
-        <p className="text-slate-500 text-sm mt-1">Manage incoming requests from verifiers requiring your consent.</p>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="panel p-6 border-primary-200 ring-1 ring-primary-50">
-          <p className="text-xs font-semibold text-primary-700 uppercase tracking-wider mb-2">Pending</p>
-          <div className="flex items-end justify-between">
-            <span className="text-3xl font-bold text-primary-900">{pendingCount}</span>
-            <Clock className="w-5 h-5 text-primary-500 mb-1" />
-          </div>
-        </div>
-        <div className="panel p-6">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Approved</p>
-          <div className="flex items-end justify-between">
-            <span className="text-3xl font-bold text-slate-900">{approvedCount}</span>
-            <CheckCircle2 className="w-5 h-5 text-emerald-500 mb-1" />
-          </div>
-        </div>
-        <div className="panel p-6">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Denied</p>
-          <div className="flex items-end justify-between">
-            <span className="text-3xl font-bold text-slate-900">{deniedCount}</span>
-            <X className="w-5 h-5 text-rose-500 mb-1" />
-          </div>
-        </div>
-      </div>
-
-      {/* Pending Requests List */}
-      <h2 className="text-lg font-bold text-slate-900 mb-4">Action Required</h2>
-      
-      {pendingCount === 0 ? (
-        <div className="panel p-12 flex flex-col items-center justify-center">
-          <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
-            <ShieldAlert className="w-8 h-8 text-slate-300" />
-          </div>
-          <h3 className="text-lg font-bold text-slate-900">No Pending Requests</h3>
-          <p className="text-slate-500 text-sm mt-1">You have responded to all data access requests.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {requests.filter(r => r.status === 'Pending').map(request => {
-            const doc = mockDocuments.find(d => d.id === request.documentId);
-            if (!doc) return null;
-
-            return (
-              <div 
-                key={request.id} 
-                className="panel p-6 hover:border-primary-300 cursor-pointer transition-colors group flex flex-col"
-                onClick={() => { setSelectedRequest(request); setModalMode('prompt'); }}
-              >
-                <div className="flex justify-between items-start mb-5">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-slate-50 border border-slate-200 rounded flex items-center justify-center text-primary-600">
-                      <Building className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-slate-900">{request.verifierName}</h3>
-                      <p className="text-xs text-slate-500">{new Date(request.requestDate).toLocaleString()}</p>
-                    </div>
-                  </div>
-                  <span className="badge-pending px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider">
-                    Manual Approval Required
-                  </span>
-                </div>
-
-                <div className="mb-5 flex-1">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Requested Document</p>
-                  <p className="text-sm font-semibold text-slate-900 bg-slate-50 border border-slate-100 px-3 py-2 rounded-md mb-4">
-                    {doc.name}
-                  </p>
-                  
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Requested Fields</p>
-                  <div className="space-y-1.5">
-                    {request.requestedFields.map(key => (
-                      <div key={key} className="flex items-center text-sm font-medium text-slate-700">
-                        <Check className="w-4 h-4 mr-2 text-emerald-500" />
-                        <span className="capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 mt-auto">
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleAction(request.id, 'Denied'); }}
-                    className="w-full px-4 py-2 rounded-md border border-slate-300 text-slate-700 text-sm font-medium hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors"
-                  >
-                    Deny
-                  </button>
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleAction(request.id, 'Approved'); }}
-                    className="w-full px-4 py-2 rounded-md bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors shadow-sm"
-                  >
-                    Approve & Share
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Detailed Modal */}
-      {selectedRequest && (() => {
-        const doc = mockDocuments.find(d => d.id === selectedRequest.documentId);
-        if (!doc) return null;
-
-        const allFieldKeys = Object.keys(doc.fields);
-        const requestedKeys = selectedRequest.requestedFields;
-        const notRequestedKeys = allFieldKeys.filter(k => !requestedKeys.includes(k));
-
-        if (modalMode === 'success') {
-          return (
-            <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                <div className="bg-emerald-600 text-white p-8 text-center relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-8 opacity-10">
-                    <ShieldAlert className="w-32 h-32" />
-                  </div>
-                  <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 backdrop-blur-sm shadow-inner relative z-10">
-                    <CheckCircle2 className="w-10 h-10 text-white" />
-                  </div>
-                  <h2 className="text-2xl font-bold relative z-10">Verification Completed</h2>
-                </div>
-                
-                <div className="p-6">
-                  <div className="space-y-3 mb-8 bg-slate-50 border border-slate-100 rounded-lg p-5">
-                    <div className="flex items-center text-sm font-medium text-slate-700">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-500 mr-3" /> Request Authenticated
-                    </div>
-                    <div className="flex items-center text-sm font-medium text-slate-700">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-500 mr-3" /> Owner Consent Received
-                    </div>
-                    <div className="flex items-center text-sm font-medium text-slate-700">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-500 mr-3" /> Issuer Verified
-                    </div>
-                    <div className="flex items-center text-sm font-medium text-slate-700">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-500 mr-3" /> Selective Disclosure Completed
-                    </div>
-                  </div>
-
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">Disclosed Information</h3>
-                  
-                  <div className="space-y-3 mb-8">
-                    {requestedKeys.map(key => (
-                      <div key={key} className="flex flex-col">
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
-                        <span className="font-mono font-medium text-sm text-slate-900">{doc.fields[key]}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="bg-primary-50 rounded-lg border border-primary-100 p-4 flex justify-between items-center text-sm font-medium">
-                    <span className="text-emerald-700 font-bold">{requestedKeys.length} fields disclosed</span>
-                    <span className="text-slate-500 flex items-center"><Lock className="w-3.5 h-3.5 mr-1" /> {notRequestedKeys.length} fields remained private</span>
-                  </div>
-                </div>
-
-                <div className="p-6 border-t border-slate-200 bg-slate-50 flex">
-                  <button 
-                    onClick={closeSuccess}
-                    className="w-full px-4 py-2.5 rounded-md bg-slate-900 text-white font-semibold hover:bg-slate-800 transition-colors shadow-sm"
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        }
-
-        return (
-          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-              
-              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0">
-                <h3 className="font-bold text-slate-900 flex items-center">
-                  Verification Request
-                </h3>
-                <button 
-                  onClick={() => setSelectedRequest(null)}
-                  className="text-slate-400 hover:text-slate-600 p-1"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              
-              <div className="p-6 overflow-y-auto flex-1">
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div>
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Verifier</p>
-                    <p className="font-semibold text-slate-900 flex items-center">
-                      <Building className="w-4 h-4 mr-1.5 text-primary-600" />
-                      {selectedRequest.verifierName}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Document</p>
-                    <p className="font-semibold text-slate-900">{doc.name}</p>
-                  </div>
-                </div>
-
-                <div className="mb-6">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Requested Information</p>
-                  <div className="bg-emerald-50 border border-emerald-100 rounded-md p-4 space-y-2">
-                    {requestedKeys.map(key => (
-                      <div key={key} className="flex items-center text-sm font-medium text-emerald-800">
-                        <Check className="w-4 h-4 mr-2 text-emerald-600 shrink-0" />
-                        <span className="capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {notRequestedKeys.length > 0 && (
-                  <div className="mb-6">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center">
-                      <Lock className="w-3.5 h-3.5 mr-1.5" />
-                      Not Requested (Kept Private)
-                    </p>
-                    <div className="bg-slate-50 border border-slate-100 rounded-md p-4 space-y-2">
-                      {notRequestedKeys.map(key => (
-                        <div key={key} className="flex items-center text-sm font-medium text-slate-500">
-                          <Lock className="w-3.5 h-3.5 mr-2 text-slate-400 shrink-0" />
-                          <span className="capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="bg-primary-50 text-primary-800 text-sm font-medium p-3 rounded-md text-center border border-primary-100">
-                  Only the selected fields will be disclosed.
-                </div>
-              </div>
-              
-              <div className="p-6 border-t border-slate-200 bg-slate-50 flex gap-3 shrink-0">
-                <button 
-                  onClick={() => handleAction(selectedRequest.id, 'Denied')}
-                  className="flex-1 px-4 py-2.5 rounded-md border border-slate-300 text-slate-700 font-semibold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors"
-                >
-                  Deny
-                </button>
-                <button 
-                  onClick={() => handleAction(selectedRequest.id, 'Approved')}
-                  className="flex-1 px-4 py-2.5 rounded-md bg-primary-600 text-white font-semibold hover:bg-primary-700 transition-colors shadow-sm"
-                >
-                  Approve & Share
-                </button>
-              </div>
-            </div>
-          </div>
+import { useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { api, label, downloadJson, verifyResult } from "../../services/api";
+import type { RequestItem, Result } from "../../services/api";
+import { useResource, useSession } from "../../services/session";
+import {
+  PageHead,
+  Loading,
+  ErrorBox,
+  Status,
+  DateText,
+  Empty,
+  Field,
+  Modal,
+  useAction,
+  Pager,
+  pageRows,
+} from "../../components/common/UI";
+function RequestDetail({ id }: { id: string }) {
+  const { user } = useSession(),
+    r = useResource<RequestItem>("/verification/requests/" + id),
+    owner = user!.role === "OWNER",
+    action = useAction();
+  const [choices, setChoices] = useState<Record<string, string>>({}),
+    [confirm, setConfirm] = useState(false),
+    [savedResult, setResult] = useState<{
+      payload: Result;
+      revision: number;
+    }>(),
+    [proof, setProof] = useState(""),
+    [json, setJson] = useState(false);
+  const d = r.data;
+  const result =
+    d &&
+    savedResult?.revision === d.revision &&
+    d.credential_status === "VALID" &&
+    ["APPROVED", "PARTIAL"].includes(d.status)
+      ? savedResult.payload
+      : undefined;
+  const pending = d?.fields.filter((f) => f.decision === "PENDING") || [];
+  if (r.loading) return <Loading />;
+  if (!d) return <ErrorBox message={r.error} retry={r.reload} />;
+  async function loadResult() {
+    await action.run(async () => {
+      const value = await api<Result>(
+        "/verification/requests/" + id + "/result",
+      );
+      const valid = await verifyResult(value);
+      if (!valid)
+        throw new Error(
+          "Disclosed claim proof failed independent browser validation.",
         );
-      })()}
-
-    </div>
+      setResult({ payload: value, revision: d!.revision });
+      setProof("Every disclosed claim verified independently in this browser.");
+    }, "");
+  }
+  return (
+    <>
+      <PageHead title="Verification request" description={d.organization}>
+        <Link to={owner ? "/owner/requests" : "/verifier/history"}>
+          Back to requests
+        </Link>
+      </PageHead>
+      <section className="card">
+        <div className="section-head">
+          <h2>Request details</h2>
+          <Status value={d.status} />
+        </div>
+        <p>
+          <strong>Purpose:</strong> {d.purpose}
+        </p>
+        <div className="detail-grid">
+          <div>
+            <small>Request reference</small>
+            <code>{d.id}</code>
+          </div>
+          <div>
+            <small>Credential</small>
+            {label(d.credential_type)} · <Status value={d.credential_status} />
+          </div>
+          <div>
+            <small>Submitted</small>
+            <DateText value={d.created_at} />
+          </div>
+          <div>
+            <small>Request expires</small>
+            <DateText value={d.expires_at} />
+          </div>
+          <div>
+            <small>Owner reference</small>
+            <code>{d.owner_id}</code>
+          </div>
+        </div>
+        <h2>Field-level decisions</h2>
+        <p className="muted">
+          No values are released while any field awaits a decision. Denied
+          fields never appear in the result.
+        </p>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Requested field</th>
+                <th>Decision</th>
+                <th>Method / rule version</th>
+                {owner && <th>Your decision</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {d.fields.map((f) => (
+                <tr key={f.field}>
+                  <td>{label(f.field)}</td>
+                  <td>
+                    <Status value={f.decision} />
+                  </td>
+                  <td>
+                    {label(f.method)}
+                    {f.rules.map((x) => (
+                      <small key={x.id}>
+                        Rule {x.id.slice(0, 8)} v{x.version}: {label(x.action)}
+                      </small>
+                    ))}
+                  </td>
+                  {owner && (
+                    <td>
+                      {f.decision === "PENDING" &&
+                      d.status === "PENDING" &&
+                      d.credential_status === "VALID" ? (
+                        <select
+                          aria-label={"Decision for " + label(f.field)}
+                          value={choices[f.field] || ""}
+                          onChange={(e) =>
+                            setChoices({
+                              ...choices,
+                              [f.field]: e.target.value,
+                            })
+                          }
+                        >
+                          <option value="">Choose…</option>
+                          <option value="APPROVED">Approve</option>
+                          <option value="DENIED">Deny</option>
+                        </select>
+                      ) : (
+                        "Finalized"
+                      )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {action.feedback}
+        <div className="actions">
+          {owner &&
+            d.status === "PENDING" &&
+            d.credential_status === "VALID" && (
+              <>
+                <button
+                  className="primary"
+                  disabled={
+                    action.busy ||
+                    !pending.length ||
+                    pending.some((f) => !choices[f.field])
+                  }
+                  onClick={() => setConfirm(true)}
+                >
+                  Review decisions
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setChoices(
+                      Object.fromEntries(
+                        pending.map((f) => [f.field, "DENIED"]),
+                      ),
+                    );
+                    setConfirm(true);
+                  }}
+                >
+                  Deny pending fields
+                </button>
+              </>
+            )}
+          {!owner && d.status === "PENDING" && (
+            <button
+              className="secondary"
+              disabled={action.busy}
+              onClick={() => setConfirm(true)}
+            >
+              Cancel request
+            </button>
+          )}
+          {!owner && ["APPROVED", "PARTIAL"].includes(d.status) && (
+            <button
+              className="primary"
+              disabled={action.busy}
+              onClick={() => void loadResult()}
+            >
+              View result
+            </button>
+          )}
+        </div>
+        {d.credential_status !== "VALID" && (
+          <p className="error">
+            This credential is {label(d.credential_status).toLowerCase()}.
+            Further disclosure is blocked.
+          </p>
+        )}
+      </section>
+      {result && (
+        <section className="card">
+          <div className="section-head">
+            <h2>Permitted result</h2>
+            <Status value={result.status} />
+          </div>
+          <p className="success">{proof}</p>
+          <p>Signed by {result.issuer}. Only approved claims are included.</p>
+          <dl className="claim-list">
+            {result.claims.map((c) => (
+              <div key={c.field}>
+                <dt>{label(c.field)}</dt>
+                <dd>{String(c.value)}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className="actions">
+            <button className="secondary" onClick={() => setJson(!json)}>
+              {json ? "Hide JSON" : "Show JSON"}
+            </button>
+            <button
+              className="secondary"
+              onClick={() => downloadJson(result, "verification-result.json")}
+            >
+              Download result JSON
+            </button>
+          </div>
+          {json && <pre>{JSON.stringify(result, null, 2)}</pre>}
+        </section>
+      )}
+      {confirm && (
+        <Modal
+          title={
+            owner ? "Confirm field decisions" : "Cancel verification request"
+          }
+          onClose={() => setConfirm(false)}
+        >
+          {owner ? (
+            <>
+              <p>
+                You are granting only the fields marked Approve. Existing
+                automatic decisions remain visible in the request.
+              </p>
+              <ul>
+                {pending.map((f) => (
+                  <li key={f.field}>
+                    {label(f.field)}:{" "}
+                    <strong>{label(choices[f.field] || "Not selected")}</strong>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p>The owner will no longer be able to approve this request.</p>
+          )}
+          {action.feedback}
+          <div className="actions">
+            <button className="secondary" onClick={() => setConfirm(false)}>
+              Back
+            </button>
+            <button
+              className={owner ? "primary" : "danger"}
+              disabled={action.busy}
+              onClick={() =>
+                void action.run(
+                  async () => {
+                    if (owner)
+                      await api(
+                        "/verification/requests/" + id + "/decide",
+                        "POST",
+                        {
+                          revision: d.revision,
+                          decisions: Object.fromEntries(
+                            pending.map((f) => [f.field, choices[f.field]]),
+                          ),
+                        },
+                      );
+                    else
+                      await api(
+                        "/verification/requests/" + id + "/cancel",
+                        "POST",
+                      );
+                    setConfirm(false);
+                    setChoices({});
+                  },
+                  owner ? "Your decisions were saved." : "Request cancelled",
+                )
+              }
+            >
+              Confirm {owner ? "decisions" : "cancellation"}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+export default function ConsentRequests() {
+  const { id } = useParams(),
+    { user } = useSession(),
+    [params] = useSearchParams(),
+    r = useResource<RequestItem[]>(id ? null : "/verification/requests");
+  const [search, setSearch] = useState(""),
+    [fromDate, setFromDate] = useState(""),
+    [toDate, setToDate] = useState(""),
+    [status, setStatus] = useState(params.get("status") || ""),
+    [page, setPage] = useState(1),
+    owner = user!.role === "OWNER";
+  if (id) return <RequestDetail key={id} id={id} />;
+  const rows = (r.data || []).filter(
+    (x) =>
+      (!fromDate || x.created_at.slice(0, 10) >= fromDate) &&
+      (!toDate || x.created_at.slice(0, 10) <= toDate) &&
+      (!status || x.status === status) &&
+      (!search ||
+        (x.organization + " " + x.purpose + " " + x.id)
+          .toLowerCase()
+          .includes(search.toLowerCase())),
+  );
+  return (
+    <>
+      <PageHead
+        title={owner ? "Verification Requests" : "Verification History"}
+        description="Review exact fields, purpose, decisions and request expiry."
+      >
+        {!owner && (
+          <Link className="primary button" to="/verifier/new">
+            New verification
+          </Link>
+        )}
+      </PageHead>
+      <section className="card">
+        <div className="filters">
+          <Field label="Search requests">
+            <input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Organisation, purpose or reference"
+            />
+          </Field>
+          <Field label="Request status">
+            <select
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All statuses</option>
+              {[
+                "PENDING",
+                "APPROVED",
+                "PARTIAL",
+                "DENIED",
+                "EXPIRED",
+                "CANCELLED",
+              ].map((x) => (
+                <option value={x} key={x}>
+                  {x === "PARTIAL" ? "Partially approved" : label(x)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Submitted from (UTC)">
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => {
+                setFromDate(e.target.value);
+                setPage(1);
+              }}
+            />
+          </Field>
+          <Field label="Submitted through (UTC)">
+            <input
+              type="date"
+              min={fromDate}
+              value={toDate}
+              onChange={(e) => {
+                setToDate(e.target.value);
+                setPage(1);
+              }}
+            />
+          </Field>
+        </div>
+        <ErrorBox message={r.error} retry={r.reload} />
+        {r.loading ? (
+          <Loading />
+        ) : rows.length ? (
+          <>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Organisation / purpose</th>
+                    <th>Credential</th>
+                    <th>Status</th>
+                    <th>Submitted</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows(rows, page).map((x) => (
+                    <tr key={x.id}>
+                      <td>
+                        <strong>{x.organization}</strong>
+                        <small>{x.purpose}</small>
+                      </td>
+                      <td>
+                        {label(x.credential_type)}
+                        <small>
+                          {x.fields.length} fields ·{" "}
+                          {label(x.credential_status)}
+                        </small>
+                      </td>
+                      <td>
+                        <Status value={x.status} />
+                      </td>
+                      <td>
+                        <DateText value={x.created_at} />
+                      </td>
+                      <td>
+                        <Link
+                          to={
+                            "/" + user!.role.toLowerCase() + "/requests/" + x.id
+                          }
+                        >
+                          View
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pager page={page} setPage={setPage} total={rows.length} />
+          </>
+        ) : (
+          <Empty>No requests match your filters.</Empty>
+        )}
+      </section>
+    </>
   );
 }

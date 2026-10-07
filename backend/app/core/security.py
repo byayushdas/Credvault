@@ -1,24 +1,22 @@
-from datetime import datetime, timedelta
-from typing import Optional
-from jose import jwt
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
 from pwdlib import PasswordHash
-from pwdlib.hashers.bcrypt import BcryptHasher
-from .config import settings
 
-pwd_context = PasswordHash((BcryptHasher(),))
+passwords = PasswordHash.recommended()
+DUMMY_HASH = passwords.hash(secrets.token_urlsafe(32))
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+def digest(value):
+    return hashlib.sha256(value.encode() if isinstance(value, str) else value).hexdigest()
 
-def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+def hash_password(value):
+    return passwords.hash(value)
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
-    return encoded_jwt
+def verify_password(value, hashed):
+    try:
+        return passwords.verify(value, hashed)
+    except Exception:
+        return False
+
+def future(**kwargs):
+    return (datetime.now(timezone.utc) + timedelta(**kwargs)).isoformat(timespec='microseconds')

@@ -1,163 +1,112 @@
+import base64,json,time,uuid
+from concurrent.futures import ThreadPoolExecutor
+from sqlalchemy import select
+from cryptography.hazmat.primitives import serialization
+from cryptography.exceptions import InvalidSignature
 import pytest
-import pytest_asyncio
-import os
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from app.main import app
-from app.database.database import Base, get_db
+from conftest import request,rule
+from app.models import Credential,AuditLog,VerificationRequest
+from app.services.audit_service import check_chain
+from app.core.security import future
+from app.services.encryption_service import canonical
 
-# Use an isolated test DB file
-TEST_DB_URL = "sqlite+aiosqlite:///./test.db"
-test_engine = create_async_engine(TEST_DB_URL, connect_args={"check_same_thread": False})
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine, class_=AsyncSession)
+def test_complete_mixed_disclosure_and_isolation(workflow):
+    w=workflow;o=w['owner'];v=w['verifier'];d=w['doc']
+    details=o.get('/api/v1/documents/'+d['id']).json()
+    assert details['signature_valid'] and details['issuer_trusted']
+    for field,action in [('degree','AUTO_APPROVE'),('universityId','AUTO_APPROVE'),('cgpa','ASK'),('rollNumber','DENY')]:
+        assert rule(o,d,w['orgs'][3],field,action).status_code==201
+    started=time.perf_counter();r=request(v,d);elapsed=time.perf_counter()-started
+    assert r.status_code==201,r.text
+    req=r.json();assert req['status']=='PENDING'
+    assert {f['field']:f['decision'] for f in req['fields']}=={'degree':'APPROVED','universityId':'APPROVED','cgpa':'PENDING','rollNumber':'DENIED'}
+    assert v.get('/api/v1/verification/requests/'+req['id']+'/result').status_code==409
+    assert o.get('/api/v1/notifications').json()['unread']>=1
+    decide=o.post('/api/v1/verification/requests/'+req['id']+'/decide',json={'revision':req['revision'],'decisions':{'cgpa':'APPROVED'}})
+    assert decide.status_code==200,decide.text
+    assert decide.json()['status']=='PARTIAL'
+    start=time.perf_counter();response=v.get('/api/v1/verification/requests/'+req['id']+'/result');result_elapsed=time.perf_counter()-start
+    assert response.status_code==200,response.text
+    result=response.json();assert {c['field'] for c in result['claims']}=={'degree','universityId','cgpa'}
+    assert 'NEVER-SHARE-ROLL-9371' not in response.text and 'rollNumber' not in response.text and 'dateOfBirth' not in response.text
+    public=serialization.load_pem_public_key(result['public_key'].encode())
+    for claim in result['claims']:
+        raw=base64.b64decode(claim['signed_payload']);public.verify(base64.b64decode(claim['signature']),raw)
+        payload=json.loads(raw)
+        assert payload['owner_id']==d['owner_id'] and payload['credential_id']==d['id']
+        for field,value in [('value','tampered'),('owner_id',w['ids'][1]),('credential_id',str(uuid.uuid4()))]:
+            with pytest.raises(InvalidSignature):public.verify(base64.b64decode(claim['signature']),canonical({**payload,field:value}))
+    b=w['login'](1);vb=w['login'](4)
+    for suffix in ['', '/file','/package']:
+        assert b.get('/api/v1/documents/'+d['id']+suffix).status_code==404
+        assert vb.get('/api/v1/documents/'+d['id']+suffix).status_code==403
+    assert vb.get('/api/v1/verification/requests/'+req['id']).status_code==404
+    assert vb.get('/api/v1/verification/requests/'+req['id']+'/result').status_code==404
+    assert b.post('/api/v1/verification/requests/'+req['id']+'/decide',json={'revision':req['revision'],'decisions':{'cgpa':'APPROVED'}}).status_code==404
+    assert b.get('/api/v1/search?q=Integration').json()==[]
+    assert o.get('/api/v1/dashboard').json()['disclosures']==1
+    assert any(e['action']=='DISCLOSURE' and set(e['shared'])=={'degree','universityId','cgpa'} for e in o.get('/api/v1/audit').json())
+    with w['factory']() as db:
+        c=db.get(Credential,d['id']);assert 'PRIVATE-DEGREE' not in c.claims_encrypted and 'NEVER-SHARE' not in c.claims_encrypted
+        assert check_chain(db)['valid']
+    assert elapsed<2 and result_elapsed<2
+    print(f'PostgreSQL mixed evaluation {elapsed*1000:.1f} ms; result {result_elapsed*1000:.1f} ms')
+    assert w['issuer'].post('/api/v1/issuer/documents/'+d['id']+'/revoke',json={'reason':'Classroom demonstration revocation'}).status_code==200
+    assert v.get('/api/v1/verification/requests/'+req['id']+'/result').status_code==409
 
-async def override_get_db():
-    async with TestingSessionLocal() as session:
-        yield session
+def test_duplicate_concurrent_submission_and_decisions(workflow):
+    w=workflow;key=str(uuid.uuid4())
+    with ThreadPoolExecutor(2) as pool:responses=list(pool.map(lambda _:request(w['verifier'],w['doc'],['degree'],key=key),range(2)))
+    assert [r.status_code for r in responses]==[201,201]
+    assert responses[0].json()['id']==responses[1].json()['id']
+    r=responses[0].json();url='/api/v1/verification/requests/'+r['id']+'/decide'
+    with ThreadPoolExecutor(2) as pool:outcomes=list(pool.map(lambda _:w['owner'].post(url,json={'revision':r['revision'],'decisions':{'degree':'APPROVED'}}),range(2)))
+    assert sorted(x.status_code for x in outcomes)==[200,409]
+    assert request(w['verifier'],w['doc'],['cgpa'],key=key).status_code==409
 
-app.dependency_overrides[get_db] = override_get_db
+def test_pending_expiry_cancel_and_no_rule(workflow):
+    w=workflow;r=request(w['verifier'],w['doc'],['degree']).json();assert r['status']=='PENDING'
+    assert w['verifier'].post('/api/v1/verification/requests/'+r['id']+'/cancel').status_code==200
+    assert w['owner'].post('/api/v1/verification/requests/'+r['id']+'/decide',json={'revision':r['revision'],'decisions':{'degree':'APPROVED'}}).status_code==409
+    r=request(w['verifier'],w['doc'],['degree']).json()
+    with w['factory']() as db:db.get(VerificationRequest,r['id']).expires_at=future(seconds=-1);db.commit()
+    assert w['verifier'].get('/api/v1/verification/requests/'+r['id']).json()['status']=='EXPIRED'
+    assert w['verifier'].get('/api/v1/verification/requests/'+r['id']+'/result').status_code==409
 
-@pytest_asyncio.fixture(autouse=True)
-async def setup_db():
-    # Setup test DB
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-    yield
-    # Teardown
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+def test_manual_denial_and_auto_approval(workflow):
+    w=workflow;r=request(w['verifier'],w['doc'],['cgpa']).json()
+    response=w['owner'].post('/api/v1/verification/requests/'+r['id']+'/decide',json={'revision':r['revision'],'decisions':{'cgpa':'DENIED'}})
+    assert response.json()['status']=='DENIED'
+    assert w['verifier'].get('/api/v1/verification/requests/'+r['id']+'/result').status_code==409
+    assert rule(w['owner'],w['doc'],w['orgs'][3],'degree','AUTO_APPROVE').status_code==201
+    r=request(w['verifier'],w['doc'],['degree']).json();assert r['status']=='APPROVED'
+    assert w['verifier'].get('/api/v1/verification/requests/'+r['id']+'/result').status_code==200
 
-@pytest_asyncio.fixture
-async def client():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        yield ac
+def test_consent_changes_do_not_reuse_broad_grants(workflow):
+    w=workflow;rule(w['owner'],w['doc'],w['orgs'][3],'degree','AUTO_APPROVE')
+    r=request(w['verifier'],w['doc'],['degree']).json()
+    assert w['verifier'].get('/api/v1/verification/requests/'+r['id']+'/result').status_code==200
+    assert rule(w['owner'],w['doc'],None,'degree','DENY').status_code==201
+    assert w['verifier'].get('/api/v1/verification/requests/'+r['id']+'/result').status_code==409
+    assert w['verifier'].get('/api/v1/verification/requests/'+r['id']).json()['status']=='DENIED'
 
-@pytest.mark.asyncio
-async def test_full_workflow(client):
-    # 1. Registration
-    # Owner
-    res = await client.post("/api/v1/auth/register", json={"name": "Owner", "email": "o@o.com", "password": "pwd", "role": "OWNER"})
-    assert res.status_code == 200, res.text
-    # Issuer
-    res = await client.post("/api/v1/auth/register", json={"name": "Issuer", "email": "i@i.com", "password": "pwd", "role": "ISSUER"})
-    assert res.status_code == 200
-    # Verifier
-    res = await client.post("/api/v1/auth/register", json={"name": "Verifier", "email": "v@v.com", "password": "pwd", "role": "VERIFIER"})
-    assert res.status_code == 200
-    
-    # 2. Login & 3. JWT auth
-    async def get_token(email):
-        res = await client.post("/api/v1/auth/login", data={"username": email, "password": "pwd"})
-        return res.json()["data"]["access_token"]
-        
-    owner_token = await get_token("o@o.com")
-    issuer_token = await get_token("i@i.com")
-    verifier_token = await get_token("v@v.com")
+def test_audit_failure_blocks_disclosure(workflow,monkeypatch):
+    w=workflow;rule(w['owner'],w['doc'],w['orgs'][3],'degree','AUTO_APPROVE')
+    r=request(w['verifier'],w['doc'],['degree']).json()
+    def fail(*args,**kwargs):raise RuntimeError('Injected persistence failure')
+    monkeypatch.setattr('app.routers.verification.audit',fail)
+    response=w['verifier'].get('/api/v1/verification/requests/'+r['id']+'/result')
+    assert response.status_code==500 and 'PRIVATE-DEGREE' not in response.text
 
-    # Fetch Owner ID
-    res = await client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {owner_token}"})
-    owner_id = res.json()["data"]["id"]
-    
-    # 4. Role Authorization (Owner trying to register issuer profile should fail)
-    res = await client.post("/api/v1/issuers/", json={"name": "Fake", "issuer_type": "EDUCATIONAL", "public_key": "fake"}, headers={"Authorization": f"Bearer {owner_token}"})
-    assert res.status_code == 403, "Role authorization failed"
-    
-    # Register Issuer profile properly
-    with open("keys/issuer_public.pem", "r") as f:
-        real_pub_key = f.read()
-    res = await client.post("/api/v1/issuers/", json={"name": "Real", "issuer_type": "EDUCATIONAL", "public_key": real_pub_key}, headers={"Authorization": f"Bearer {issuer_token}"})
-    assert res.status_code == 200
-    
-    # Manually verify issuer for the test
-    from app.models.issuer import Issuer
-    from sqlalchemy.future import select
-    async with TestingSessionLocal() as session:
-        result = await session.execute(select(Issuer).filter(Issuer.name == "Real"))
-        test_issuer = result.scalars().first()
-        test_issuer.verified = True
-        await session.commit()
-    
-    
-    # 5. Document creation & 6. Document encryption & 7. Signature generation & 8. Signature verification & 9. Hash verification
-    doc_payload = {
-        "owner_id": owner_id,
-        "name": "Degree",
-        "category": "EDUCATION",
-        "document_type": "DEGREE_CERTIFICATE",
-        "fields": {
-            "name": "Ayush Das",
-            "dob": "2000-01-01",
-            "address": "123 Street",
-            "degree": "B.Tech",
-            "university": "XYZ University",
-            "cgpa": "9.5"
-        }
-    }
-    res = await client.post("/api/v1/issuer/documents", json=doc_payload, headers={"Authorization": f"Bearer {issuer_token}"})
-    assert res.status_code == 200, res.text
-    doc_id = res.json()["data"]["id"]
-    assert res.json()["data"]["signature_valid"] is True
-    assert res.json()["data"]["integrity_valid"] is True
-
-    # 10, 11, 12. Consent AUTO_APPROVE, ASK, DENY
-    res = await client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {verifier_token}"})
-    verifier_id = res.json()["data"]["id"]
-
-    # AUTO_APPROVE for degree and university
-    await client.post("/api/v1/consent/rules/", json={"document_id": doc_id, "verifier_id": verifier_id, "field_name": "degree", "action": "AUTO_APPROVE"}, headers={"Authorization": f"Bearer {owner_token}"})
-    await client.post("/api/v1/consent/rules/", json={"document_id": doc_id, "verifier_id": verifier_id, "field_name": "university", "action": "AUTO_APPROVE"}, headers={"Authorization": f"Bearer {owner_token}"})
-    # DENY for cgpa
-    await client.post("/api/v1/consent/rules/", json={"document_id": doc_id, "verifier_id": verifier_id, "field_name": "cgpa", "action": "DENY"}, headers={"Authorization": f"Bearer {owner_token}"})
-    # ASK for name
-    await client.post("/api/v1/consent/rules/", json={"document_id": doc_id, "verifier_id": verifier_id, "field_name": "name", "action": "ASK"}, headers={"Authorization": f"Bearer {owner_token}"})
-
-    # Verifier requests AUTO_APPROVE fields only
-    res = await client.post("/api/v1/verification/requests/", json={"owner_id": owner_id, "document_id": doc_id, "requested_fields": ["degree", "university"]}, headers={"Authorization": f"Bearer {verifier_token}"})
-    assert res.json()["data"]["status"] == "APPROVED"
-    req_id_auto = res.json()["data"]["request_id"]
-    
-    # Check Result (Selective Disclosure!)
-    res = await client.get(f"/api/v1/verification/requests/{req_id_auto}/result", headers={"Authorization": f"Bearer {verifier_token}"})
-    disclosed = res.json()["data"]["disclosed_fields"]
-    
-    # CRITICAL TEST: 13. Selective disclosure logic MUST NOT leak unrequested fields
-    assert "degree" in disclosed
-    assert "university" in disclosed
-    assert "name" not in disclosed
-    assert "dob" not in disclosed
-    assert "address" not in disclosed
-    assert "cgpa" not in disclosed
-    assert res.json()["data"]["protected_field_count"] == 4
-
-    # Verifier requests DENY field (cgpa)
-    res = await client.post("/api/v1/verification/requests/", json={"owner_id": owner_id, "document_id": doc_id, "requested_fields": ["degree", "cgpa"]}, headers={"Authorization": f"Bearer {verifier_token}"})
-    assert res.json()["data"]["status"] == "DENIED"
-
-    # Verifier requests ASK field (name)
-    res = await client.post("/api/v1/verification/requests/", json={"owner_id": owner_id, "document_id": doc_id, "requested_fields": ["name", "degree"]}, headers={"Authorization": f"Bearer {verifier_token}"})
-    assert res.json()["data"]["status"] == "PENDING"
-    req_id_ask = res.json()["data"]["request_id"]
-
-    # Owner approves the ASK request
-    res = await client.post(f"/api/v1/verification/requests/{req_id_ask}/approve", json="Looks good", headers={"Authorization": f"Bearer {owner_token}"})
-    assert res.status_code == 200
-    
-    # 14. Audit creation check
-    res = await client.get("/api/v1/audit/", headers={"Authorization": f"Bearer {owner_token}"})
-    audit_logs = res.json()["data"]
-    assert len(audit_logs) > 0
-    actions = [log["action"] for log in audit_logs]
-    assert "REQUEST_CREATED" in actions
-    assert "AUTO_APPROVED" in actions
-    assert "REQUEST_DENIED" in actions
-    assert "USER_APPROVED" in actions
-
-    # 15. Revoked document cannot be verified
-    res = await client.post(f"/api/v1/issuer/documents/{doc_id}/revoke", headers={"Authorization": f"Bearer {issuer_token}"})
-    assert res.status_code == 200
-
-    res = await client.post("/api/v1/verification/requests/", json={"owner_id": owner_id, "document_id": doc_id, "requested_fields": ["degree"]}, headers={"Authorization": f"Bearer {verifier_token}"})
-    assert res.status_code == 400
-    assert res.json()["error"]["code"] == "REVOKED_DOCUMENT"
+def test_disclosure_and_revocation_are_serialized(workflow):
+    w=workflow;rule(w['owner'],w['doc'],w['orgs'][3],'degree','AUTO_APPROVE')
+    r=request(w['verifier'],w['doc'],['degree']).json()
+    with ThreadPoolExecutor(2) as pool:
+        a=pool.submit(w['verifier'].get,'/api/v1/verification/requests/'+r['id']+'/result')
+        b=pool.submit(w['issuer'].post,'/api/v1/issuer/documents/'+w['doc']['id']+'/revoke',json={'reason':'Concurrent revocation test'})
+        assert a.result().status_code in (200,409);assert b.result().status_code==200
+    assert w['verifier'].get('/api/v1/verification/requests/'+r['id']+'/result').status_code==409
+    with w['factory']() as db:
+        events=list(db.scalars(select(AuditLog).where(AuditLog.credential_id==w['doc']['id']).order_by(AuditLog.id)))
+        revoke_id=next(e.id for e in events if e.action=='CREDENTIAL_REVOKED')
+        assert all(e.id<revoke_id for e in events if e.action=='DISCLOSURE')
