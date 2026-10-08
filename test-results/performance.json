@@ -1,0 +1,26 @@
+{
+  "platform": "macOS-14.6.1-arm64-arm-64bit",
+  "python": "3.10.0",
+  "database": "PostgreSQL 18.4 on x86_64-apple-darwin24.6.0, compiled by Apple clang version 17.0.0 (clang-1700.6.3.2), 64-bit",
+  "transport": "FastAPI TestClient in-process, real loopback PostgreSQL; includes database/audit commits; excludes human waiting and large file transfer",
+  "samples": 25,
+  "dataset": {
+    "users": 5,
+    "organizations": 3,
+    "credentials": 6,
+    "initial_requests": 6,
+    "added_requests": 25,
+    "requested_fields_per_request": 1,
+    "consent_rules": 5
+  },
+  "automatic_evaluation": {
+    "median_ms": 11.55,
+    "p95_ms": 12.73,
+    "max_ms": 15.28
+  },
+  "result_retrieval": {
+    "median_ms": 7.76,
+    "p95_ms": 8.12,
+    "max_ms": 9.82
+  }
+}
