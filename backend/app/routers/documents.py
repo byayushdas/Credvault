@@ -4,15 +4,16 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Response, Body
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..database.database import get_db
-from ..models import Credential, Draft, Idempotency, IssuerKey, Organization, uid, now
+from ..models import Credential, Draft, Idempotency, IssuerKey, Organization, VerificationRequest, uid, now
 from ..core.dependencies import role, Principal
 from ..core.security import digest
-from ..schemas.contracts import Issue, IssueToVault, ImportDocument, Reason
+from ..schemas.contracts import Issue, IssueToVault, ImportDocument, Reason, AutoFetchUpdate
 from ..services.document_service import (SCHEMAS, issue, summary, content, accessible_document,
     download_bytes, validate_file, store_file, notify, notify_org, owner_lookup)
 from ..services.encryption_service import encrypt, decrypt, canonical
 from ..services.signature_service import manifest, verify, key_trusted
 from ..services.audit_service import audit
+from ..services.consent_service import reconcile
 
 router = APIRouter(prefix='/api/v1', tags=['Credentials'])
 owner = role('OWNER')
@@ -207,6 +208,21 @@ def file(document_id: str, p: Principal = Depends(reader), db: Session = Depends
     ext = {'application/pdf':'pdf', 'image/png':'png', 'image/jpeg':'jpg'}[d.file_type]
     return Response(raw, media_type=d.file_type, headers={'Content-Disposition': 'inline; filename="credential.' + ext + '"',
         'Content-Security-Policy': "sandbox; default-src 'none'"})
+
+@router.patch('/documents/{document_id}/auto-fetch')
+def update_auto_fetch(document_id: str, data: AutoFetchUpdate,
+                      p: Principal = Depends(owner), db: Session = Depends(get_db)):
+    d = accessible_document(db, p, document_id)
+    if d.auto_fetch != data.auto_fetch:
+        d.auto_fetch = data.auto_fetch
+        audit(db, p.user, 'DOCUMENT_AUTO_FETCH_UPDATED', d.owner_id, d.id,
+            outcome='ENABLED' if d.auto_fetch else 'DISABLED', method='MANUAL')
+        for req in db.scalars(select(VerificationRequest).where(
+                VerificationRequest.credential_id == d.id,
+                VerificationRequest.status.in_(['PENDING', 'APPROVED', 'PARTIAL']))):
+            reconcile(db, req, d, p.user)
+        db.commit()
+    return summary(db, d)
 
 @router.get('/documents/{document_id}/package')
 def export_package(document_id: str, p: Principal = Depends(reader), db: Session = Depends(get_db)):

@@ -4,6 +4,7 @@ import { Upload, Plus } from "lucide-react";
 import { api, fileContent, label } from "../../services/api";
 import type { Doc } from "../../services/api";
 import { useResource, useSession } from "../../services/session";
+import AutoFetchSwitch from "../../components/common/AutoFetchSwitch";
 import {
   PageHead,
   Loading,
@@ -99,6 +100,13 @@ export default function MyDocuments() {
         )}
       </PageHead>
       {action.feedback}
+      {owner && (
+        <div className="notice">
+          Auto fetch lets approved verifiers receive requested fields without
+          waiting for you. Turn it off to require manual approval. Deny rules
+          still apply, and only valid credentials can be fetched.
+        </div>
+      )}
       <section className="card">
         <div className="filters">
           <Field label="Search documents">
@@ -177,6 +185,7 @@ export default function MyDocuments() {
                     <th>Issuer</th>
                     <th>Issued / expires</th>
                     <th>Status</th>
+                    {owner && <th>Auto fetch</th>}
                     <th>Action</th>
                   </tr>
                 </thead>
@@ -199,6 +208,11 @@ export default function MyDocuments() {
                       <td>
                         <Status value={d.status} />
                       </td>
+                      {owner && (
+                        <td>
+                          <AutoFetchSwitch document={d} refreshing={r.refreshing} />
+                        </td>
+                      )}
                       <td>
                         <Link to={root + "/documents/" + d.id}>View</Link>
                       </td>

@@ -706,6 +706,43 @@ td select {
 .form-card {
   max-width: 780px;
 }
+.auto-fetch-control {
+  display: grid;
+  gap: 5px;
+}
+.auto-fetch-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  min-height: 44px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--navy);
+  font-weight: 650;
+}
+.switch-track {
+  display: inline-flex;
+  align-items: center;
+  width: 44px;
+  height: 26px;
+  padding: 3px;
+  border-radius: 20px;
+  background: var(--muted);
+}
+.switch-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+}
+.auto-fetch-switch[aria-checked="true"] .switch-track {
+  background: var(--blue);
+}
+.auto-fetch-switch[aria-checked="true"] .switch-thumb {
+  transform: translateX(18px);
+}
 .checkbox {
   display: flex;
   align-items: center;

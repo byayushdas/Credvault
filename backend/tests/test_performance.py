@@ -1,7 +1,7 @@
 import json,platform,time,statistics
 from pathlib import Path
 from sqlalchemy import text
-from conftest import rule,request
+from conftest import rule,request,auto_fetch
 from app.database.database import engine
 
 def test_runtime_audit_privileges():
@@ -11,6 +11,7 @@ def test_runtime_audit_privileges():
 
 def test_local_processing_target(workflow):
     w=workflow;rule(w['owner'],w['doc'],w['orgs'][3],'degree','AUTO_APPROVE')
+    auto_fetch(w['owner'],w['doc'])
     evaluations=[];retrievals=[]
     for _ in range(25):
         start=time.perf_counter();response=request(w['verifier'],w['doc'],['degree']);evaluations.append((time.perf_counter()-start)*1000)

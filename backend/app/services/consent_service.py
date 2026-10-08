@@ -8,15 +8,15 @@ def evaluate(db, owner_id, verifier_id, document, field):
         and (not r.credential_id or r.credential_id == document.id)
         and (not r.credential_type or r.credential_type == document.type) and r.field in (field, '*')]
     snapshots = [{'id': r.id, 'version': r.version, 'action': r.action} for r in sorted(rules, key=lambda r:r.id)]
+    # Snapshot the owner-controlled document setting as well as legacy rules so
+    # changing the switch invalidates automatic grants before the next disclosure.
+    snapshots.append({'id': 'auto-fetch:' + document.id, 'version': 1,
+        'action': 'AUTO_APPROVE' if document.auto_fetch else 'ASK'})
     if any(r.action == 'DENY' for r in rules):
         return 'DENIED', snapshots
-    if not rules:
-        return 'PENDING', snapshots
-    def specificity(r):
-        return (2 if r.credential_id else 1 if r.credential_type else 0, int(bool(r.verifier_id)), int(r.field != '*'))
-    highest = max(specificity(r) for r in rules)
-    actions = {r.action for r in rules if specificity(r) == highest}
-    return ('APPROVED' if actions == {'AUTO_APPROVE'} else 'PENDING'), snapshots
+    # The document switch determines whether approval is automatic. Existing
+    # AUTO_APPROVE/ASK rules cannot bypass an off switch or override an on switch.
+    return ('APPROVED' if document.auto_fetch else 'PENDING'), snapshots
 
 def request_fields(db, req):
     return list(db.scalars(select(RequestField).where(RequestField.request_id == req.id).order_by(RequestField.field)))
@@ -54,8 +54,9 @@ def reconcile(db, req, document, actor):
                 if decision == 'DENIED':
                     field.decision = 'DENIED'
                     field.method = 'RULE'
-                elif field.method == 'RULE':
+                elif field.method in ('RULE', 'AUTO_FETCH'):
                     field.decision = decision
+                    field.method = 'AUTO_FETCH' if decision == 'APPROVED' else 'RULE'
             field.rules = snapshots
             record_decision(db, field)
             changed = True

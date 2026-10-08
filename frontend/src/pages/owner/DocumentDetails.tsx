@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, fetchFile, downloadJson, label } from "../../services/api";
 import type { Doc, Audit, RequestItem } from "../../services/api";
 import { useResource, useSession } from "../../services/session";
+import AutoFetchSwitch from "../../components/common/AutoFetchSwitch";
 import {
   PageHead,
   Loading,
@@ -43,6 +44,21 @@ export default function DocumentDetails() {
         </Link>
       </PageHead>
       {action.feedback}
+      {user!.role === "OWNER" && (
+        <section className="card">
+          <h2>Auto fetch</h2>
+          <p>
+            When on, approved verifiers can fetch requested fields without your
+            approval. When off, you approve each request manually. Deny rules
+            still apply. Turning this off stops further automatic access;
+            existing manual approvals remain valid.
+          </p>
+          {d.status !== "VALID" && (
+            <p className="muted">Only valid credentials can be fetched.</p>
+          )}
+          <AutoFetchSwitch document={d} refreshing={r.refreshing} />
+        </section>
+      )}
       <section className="card">
         <div className="section-head">
           <h2>Credential details</h2>

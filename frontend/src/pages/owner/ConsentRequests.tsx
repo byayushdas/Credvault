@@ -97,11 +97,11 @@ function RequestDetail({ id }: { id: string }) {
         
         {owner ? (
           <div className="decisions-grouped">
-            {d.fields.filter((f) => f.decision === "APPROVED" && f.method === "RULE").length > 0 && (
+            {d.fields.filter((f) => f.decision === "APPROVED" && f.method !== "MANUAL").length > 0 && (
               <div className="decision-group">
                 <h3>AUTO-APPROVED:</h3>
                 <ul>
-                  {d.fields.filter((f) => f.decision === "APPROVED" && f.method === "RULE").map((f) => (
+                  {d.fields.filter((f) => f.decision === "APPROVED" && f.method !== "MANUAL").map((f) => (
                     <li key={f.field}>{label(f.field)}</li>
                   ))}
                 </ul>
@@ -149,11 +149,11 @@ function RequestDetail({ id }: { id: string }) {
               </div>
             )}
 
-            {d.fields.filter((f) => f.decision === "DENIED" || (f.decision === "APPROVED" && f.method !== "RULE")).length > 0 && (
+            {d.fields.filter((f) => f.decision === "DENIED" || (f.decision === "APPROVED" && f.method === "MANUAL")).length > 0 && (
               <div className="decision-group">
                 <h3>Other finalized decisions:</h3>
                 <ul>
-                  {d.fields.filter((f) => f.decision === "DENIED" || (f.decision === "APPROVED" && f.method !== "RULE")).map((f) => (
+                  {d.fields.filter((f) => f.decision === "DENIED" || (f.decision === "APPROVED" && f.method === "MANUAL")).map((f) => (
                     <li key={f.field}>
                       {label(f.field)} - <Status value={f.decision} />
                     </li>
@@ -185,7 +185,9 @@ function RequestDetail({ id }: { id: string }) {
                         {label(f.method)}
                         {f.rules.map((x) => (
                           <small key={x.id}>
-                            Rule {x.id.slice(0, 8)} v{x.version}: {label(x.action)}
+                            {x.id.startsWith("auto-fetch:")
+                              ? "Document auto fetch: " + (x.action === "AUTO_APPROVE" ? "On" : "Off")
+                              : "Rule " + x.id.slice(0, 8) + " v" + x.version + ": " + label(x.action)}
                           </small>
                         ))}
                       </td>
@@ -227,6 +229,7 @@ function RequestDetail({ id }: { id: string }) {
       {result && (
         <section className="card" style={{ marginTop: "2rem" }}>
           <h2>Verification Result</h2>
+          <p className="success">{proof}</p>
           
           <div style={{ marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-success-light, #ecfdf5)", borderRadius: "var(--radius)", color: "var(--success-text, #065f46)", border: "1px solid var(--success-border, #34d399)" }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>

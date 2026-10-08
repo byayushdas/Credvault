@@ -62,7 +62,7 @@ def test_marksheet_disclosure_recipient_and_live_recipients(env):
         assert rule(owner,doc,env['orgs'][3],field,action).status_code==201
     req=request(verifier,doc,['course','semester','cgpa','rollNumber']).json()
     verifier_before=revision(env['factory'],env['ids'][3])
-    assert owner.post('/api/v1/verification/requests/'+req['id']+'/decide',json={'revision':req['revision'],'decisions':{'cgpa':'APPROVED'}}).status_code==200
+    assert owner.post('/api/v1/verification/requests/'+req['id']+'/decide',json={'revision':req['revision'],'decisions':{'course':'APPROVED','semester':'APPROVED','cgpa':'APPROVED'}}).status_code==200
     assert revision(env['factory'],env['ids'][3])>verifier_before
     result=verifier.get('/api/v1/verification/requests/'+req['id']+'/result')
     assert result.status_code==200 and 'NEVER-LIVE-ROLL' not in result.text

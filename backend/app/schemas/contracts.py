@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Literal, Any
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 from email_validator import validate_email
 from ..core.config import settings
 
@@ -73,6 +73,9 @@ class IssueToVault(Input):
 class ImportDocument(Input):
     title: str = Field(min_length=3, max_length=160)
     attachment: Attachment
+
+class AutoFetchUpdate(Input):
+    auto_fetch: StrictBool
 
 class Rule(Input):
     verifier_id: str | None = None

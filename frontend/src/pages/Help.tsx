@@ -22,17 +22,20 @@ export default function Help() {
             specific fields for a stated purpose and receives only approved
             values.
           </p>
-          <h2>Consent modes</h2>
+          <h2>Auto fetch and consent</h2>
           <p>
-            <strong>Auto-approve</strong> grants the matching field.{" "}
-            <strong>Ask me</strong> waits for your explicit decision.{" "}
+            Each document has an <strong>Auto fetch</strong> switch in My
+            Documents and its detail page. It starts off, requiring your manual
+            approval. Turn it on to let approved verifiers fetch requested
+            fields immediately.{" "}
             <strong>Deny</strong> blocks a field and wins over other rules.
           </p>
           <p>
-            Document rules take priority over type rules, then all credentials.
-            Within those scopes, an exact verifier and then an exact field are
-            more specific. Equal conflicting rules ask you. Disabled and expired
-            rules are ignored.
+            The document switch controls approval, including when older
+            Auto-approve or Ask me rules exist. Disabled and expired Deny rules
+            are ignored. Turning Auto fetch off stops further automatic access;
+            existing manual approvals remain valid until they expire or are
+            blocked by a Deny rule.
           </p>
           <p>
             Any pending field holds the whole result. Final results include only
@@ -58,20 +61,20 @@ export default function Help() {
             </li>
             <li>Sign in as Owner A and inspect the signed values and dates.</li>
             <li>
-              Create four rules for ABC Technologies: degree and university ID
-              Auto-approve, CGPA Ask me, roll number Deny.
+              Leave Auto fetch off and create a Deny rule for the roll number
+              for ABC Technologies.
             </li>
             <li>
               Sign in as Verifier A. Request all four fields with a purpose.
             </li>
-            <li>Return to Owner A and approve the pending CGPA field.</li>
+            <li>Return to Owner A and approve the three pending fields.</li>
             <li>
               Open the verifier result. It contains exactly three values and
               their claim proofs. The browser validates the signatures.
             </li>
             <li>
-              Inspect the audit and notifications. Repeat with denial and
-              automatic approval.
+              Inspect the audit and notifications. Turn Auto fetch on and
+              submit another request to try immediate access.
             </li>
             <li>
               Revoke the credential as issuer; result access must stop. Try the

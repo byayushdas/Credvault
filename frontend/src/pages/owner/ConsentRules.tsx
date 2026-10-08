@@ -21,7 +21,7 @@ const fresh: Rule = {
   credential_id: null,
   credential_type: null,
   field: "*",
-  action: "ASK",
+  action: "DENY",
   enabled: true,
   expires_at: null,
 };
@@ -82,7 +82,7 @@ export default function ConsentRules() {
     <>
       <PageHead
         title="Consent Rules"
-        description="Choose which fields a verifier may receive automatically, must ask for, or cannot receive."
+        description="Protect fields with Deny rules. Manage automatic approval with each document's Auto fetch switch."
       >
         <button className="primary" onClick={() => setEdit({ ...fresh })}>
           Create rule
@@ -90,9 +90,10 @@ export default function ConsentRules() {
       </PageHead>
       {action.feedback}
       <div className="notice">
-        An applicable Deny always wins. Otherwise document scope takes priority
-        over credential type, then all credentials; exact verifier and field
-        break ties. Conflicting equal scopes ask you. No rule means Ask me.
+        An applicable Deny always wins. For other fields, Auto fetch on means
+        immediate access and Auto fetch off requires your approval. Existing
+        Auto-approve and Ask me rules are kept for reference; the document switch
+        now controls approval. Disabled and expired rules are ignored.
       </div>
       <section className="card">
         <div className="filters">
@@ -158,6 +159,9 @@ export default function ConsentRules() {
                         <small>
                           {x.enabled ? "Enabled" : "Disabled"} · v{x.version}
                         </small>
+                        {x.action !== "DENY" && (
+                          <small>Approval is controlled by document Auto fetch.</small>
+                        )}
                       </td>
                       <td>
                         <DateText value={x.expires_at} />
@@ -204,7 +208,7 @@ export default function ConsentRules() {
             <Pager page={page} setPage={setPage} total={rows.length} />
           </>
         ) : (
-          <Empty>No matching rules. New requests default to Ask me.</Empty>
+          <Empty>No matching rules. Each document's Auto fetch switch controls approval.</Empty>
         )}
       </section>
       {edit && (
@@ -291,8 +295,11 @@ export default function ConsentRules() {
                 value={edit.action}
                 onChange={(e) => setEdit({ ...edit, action: e.target.value })}
               >
-                <option value="AUTO_APPROVE">Auto-approve</option>
-                <option value="ASK">Ask me</option>
+                {edit.action !== "DENY" && (
+                  <option value={edit.action}>
+                    {label(edit.action)} (managed by Auto fetch)
+                  </option>
+                )}
                 <option value="DENY">Deny</option>
               </select>
             </Field>
@@ -337,8 +344,8 @@ export default function ConsentRules() {
           onClose={() => setDeleting(undefined)}
         >
           <p>
-            Requests will use the remaining rules. With no matching rule, they
-            require manual approval.
+            Requests will use the remaining Deny rules and each document's
+            Auto fetch setting.
           </p>
           {action.feedback}
           <button

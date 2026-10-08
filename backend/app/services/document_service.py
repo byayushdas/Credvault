@@ -172,7 +172,8 @@ def summary(db, d):
         'issuer': org.name if org else 'Personal upload', 'issuer_id': d.issuer_id,
         'issued_at': d.issued_at, 'expires_at': d.expires_at, 'status': credential_status(db, d),
         'version': d.version, 'replaces_id': d.replaces_id, 'has_file': bool(d.file_name),
-        'file_type': d.file_type, 'revoke_reason': d.revoke_reason, 'created_at': d.created_at}
+        'file_type': d.file_type, 'revoke_reason': d.revoke_reason, 'created_at': d.created_at,
+        'auto_fetch': d.auto_fetch}
 
 def issue(db, p, data):
     owner = owner_lookup(db, data.owner_id)

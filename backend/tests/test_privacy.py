@@ -4,7 +4,7 @@ from sqlalchemy import select,text
 from sqlalchemy.exc import DatabaseError
 from PIL import Image
 import pytest
-from conftest import request,rule
+from conftest import request,rule,auto_fetch
 from app.models import Credential,ConsentRule,IssuerKey,Organization
 from app.core.security import future
 from app.services.audit_service import check_chain
@@ -14,7 +14,7 @@ def image_content():
     return out.getvalue()
 
 @pytest.mark.parametrize('action,enabled,expired,expected',[
-    ('AUTO_APPROVE',True,False,'APPROVED'),('ASK',True,False,'PENDING'),('DENY',True,False,'DENIED'),
+    ('AUTO_APPROVE',True,False,'PENDING'),('ASK',True,False,'PENDING'),('DENY',True,False,'DENIED'),
     ('AUTO_APPROVE',False,False,'PENDING'),('AUTO_APPROVE',True,True,'PENDING'),('DENY',False,False,'PENDING')])
 def test_consent_matrix(workflow,action,enabled,expired,expected):
     w=workflow;r=rule(w['owner'],w['doc'],w['orgs'][3],'degree',action,enabled=enabled)
@@ -82,6 +82,7 @@ def test_signed_package_binding_tampering_and_replacement(workflow):
 @pytest.mark.parametrize('tamper',['ciphertext','signature','key','issuer','expiry'])
 def test_integrity_trust_and_expiry_fail_closed(workflow,tamper):
     w=workflow;rule(w['owner'],w['doc'],w['orgs'][3],'degree','AUTO_APPROVE')
+    auto_fetch(w['owner'],w['doc'])
     r=request(w['verifier'],w['doc'],['degree']).json()
     with w['factory']() as db:
         d=db.get(Credential,w['doc']['id'])
@@ -98,6 +99,7 @@ def test_age_threshold_does_not_disclose_birth_date(env):
     o=env['login'](0);v=env['login'](3)
     d=next(d for d in o.get('/api/v1/documents').json() if d['type']=='AGE')
     rule(o,d,env['orgs'][3],'over18','AUTO_APPROVE')
+    auto_fetch(o,d)
     r=request(v,d,['over18']).json();result=v.get('/api/v1/verification/requests/'+r['id']+'/result')
     assert result.status_code==200,result.text
     assert result.json()['claims'][0]['value'] is True
@@ -122,6 +124,7 @@ def test_age_assessment_is_bound_to_threshold_proof(env):
     o=env['login'](0);v=env['login'](3)
     d=next(d for d in o.get('/api/v1/documents').json() if d['type']=='AGE')
     rule(o,d,env['orgs'][3],'over18','AUTO_APPROVE')
+    auto_fetch(o,d)
     r=request(v,d,['over18']).json()
     result=v.get('/api/v1/verification/requests/'+r['id']+'/result').json()
     payload=json.loads(base64.b64decode(result['claims'][0]['signed_payload']))
@@ -154,7 +157,7 @@ def test_stale_rule_changes_do_not_overwrite_consent(workflow):
     assert w['owner'].delete(url+'?version=1').status_code==409
     current=next(r for r in w['owner'].get('/api/v1/consent/rules').json() if r['id']==created['id'])
     assert current['enabled'] and current['action']=='AUTO_APPROVE' and current['version']==2
-    assert request(w['verifier'],w['doc'],['degree']).json()['status']=='APPROVED'
+    assert request(w['verifier'],w['doc'],['degree']).json()['status']=='PENDING'
     assert w['owner'].delete(url+'?version=2').status_code==200
 
 def test_wrong_master_key_and_issuer_attachment_integrity(workflow,monkeypatch):

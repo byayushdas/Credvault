@@ -10,6 +10,7 @@
     "dev": "node scripts/manage.mjs dev",
     "test": "node scripts/manage.mjs test",
     "test:browser": "node scripts/browser-test.mjs",
+    "test:auto-fetch-browser": "node scripts/auto-fetch-browser-test.mjs",
     "build": "npm --prefix frontend run build",
     "lint": "npm --prefix frontend run lint",
     "audit:check": "node scripts/manage.mjs audit"

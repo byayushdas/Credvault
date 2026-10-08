@@ -1,5 +1,5 @@
 import uuid
-from conftest import request, rule
+from conftest import request, rule, auto_fetch
 from app.services.document_service import SCHEMAS
 
 
@@ -15,6 +15,7 @@ def test_organisation_types_issue_and_disclose_only_consented_fields(env):
         assert response.status_code == 201, response.text
         doc = response.json()
         assert owner.get('/api/v1/documents/' + doc['id']).json()['claims'] == claims
+        auto_fetch(owner, doc)
         for index, field in enumerate(fields):
             response = rule(owner, doc, env['orgs'][3], field,
                 'AUTO_APPROVE' if index == 0 else 'DENY', credential_type=kind)

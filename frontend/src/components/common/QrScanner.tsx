@@ -47,11 +47,11 @@ export function QrScanner({ onScan, onCancel }: QrScannerProps) {
             throw new Error("Invalid format");
           }
           scannerInstance.current?.clear();
-        } catch (err) {
+        } catch {
           setError("Invalid QR code format. Scan a valid CredVault owner or share QR.");
         }
       },
-      (err) => {
+      () => {
         // Ignore normal scan errors (happens every frame it doesn't see a QR)
       }
     );

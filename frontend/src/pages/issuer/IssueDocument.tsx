@@ -52,7 +52,6 @@ export default function IssueDocument() {
     [attachmentName, setAttachmentName] = useState(""),
     [loadError, setLoadError] = useState("");
   const [savedDraft, setSavedDraft] = useState(false);
-  const [confirmedOwner, setConfirmedOwner] = useState("");
   const [isScanning, setIsScanning] = useState(false);
   const [targetVault, setTargetVault] = useState<{ vault_id: string; masked_name: string } | null>(null);
   const [scanError, setScanError] = useState("");
@@ -129,6 +128,7 @@ export default function IssueDocument() {
   const handleScan = async (res: VaultScanResult) => {
     try {
       setScanError("");
+      if (!res.vault_id) throw new Error("Scan an owner's vault QR to issue a credential.");
       const confirmRes = await api<{ vault_id: string; masked_name: string; status: string }>(
         "/owners/confirm?vault_id=" + encodeURIComponent(res.vault_id)
       );
@@ -192,7 +192,7 @@ export default function IssueDocument() {
                           <button 
                             type="button" 
                             className="primary" 
-                            onClick={() => handleScan({ vault_id: data.vault_id, source: "manual" })}
+                            onClick={() => handleScan({ vault_id: data.vault_id, source: "MANUAL" })}
                             disabled={!data.vault_id}
                           >
                             Lookup

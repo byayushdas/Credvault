@@ -23,7 +23,8 @@ CredVault supports:
 - Government and educational credential types
 - **AES-256-GCM encrypted** credential/attachment storage
 - **Ed25519 digital signatures** and integrity verification
-- **Auto-Approve, Ask, and Deny** consent rules
+- **Deny** consent rules to protect specific fields
+- Per-document **Auto fetch** switches, off by default; on allows immediate verification and off requires manual approval. Explicit **Deny** rules always apply.
 - **Selective disclosure** of requested fields
 - Credential **revocation**
 - **Append-only audit logging**
@@ -137,13 +138,15 @@ An approved organization that can **identify an Owner vault, request specific fi
 
 **FR5 – Credential Management:** Owners shall view credentials; Issuers shall manage credentials they issued and may **revoke** them.
 
-**FR6 – Consent Rules:** Owners shall configure **AUTO-APPROVE, ASK, and DENY** rules for credential fields.
+**FR6 – Consent Rules:** Owners shall control approval with each document's **Auto fetch** switch and protect fields with **DENY** rules. Existing **AUTO-APPROVE** and **ASK** rules remain recorded, but the switch determines automatic versus manual approval.
 
 **FR7 – Verification Requests:** Verifiers shall request a selected credential and **specific fields**, with a stated purpose and request lifetime.
 
 **FR8 – Selective Disclosure:** System shall disclose **only approved requested fields** and keep unrelated fields private.
 
 **FR9 – Owner Decision:** Owners shall **approve or deny** pending requests requiring manual consent.
+
+**FR9a – Auto Fetch:** Every document starts with Auto fetch off, including existing documents after migration. Only its owner may change the switch. On automatically approves requested fields unless a Deny rule applies; off requires manual approval, even with legacy auto-approval rules. Changes re-evaluate outstanding requests. Turning it off withdraws automatic grants while preserving manual approvals, and never restores denied, expired, or cancelled grants. Signature, issuer trust, expiry, and revocation checks still apply. Personal uploads remain unverified and cannot be fetched through verification.
 
 **FR10 – Verification:** System shall verify **issuer trust, digital signatures, credential status, and integrity** before disclosure.
 

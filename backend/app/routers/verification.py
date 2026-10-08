@@ -69,7 +69,8 @@ def submit(data: NewRequest, idempotency_key: str = Header(min_length=16, max_le
     fields = []
     for field in data.fields:
         decision, rules = evaluate(db, owner.id, p.org.id, d, field)
-        f = RequestField(request_id=req.id, field=field, decision=decision, method='RULE', rules=rules)
+        f = RequestField(request_id=req.id, field=field, decision=decision,
+            method='AUTO_FETCH' if decision == 'APPROVED' else 'RULE', rules=rules)
         db.add(f)
         record_decision(db, f)
         fields.append(f)
@@ -133,7 +134,8 @@ def submit_from_vault(data: VerificationFromVault, idempotency_key: str = Header
     fields = []
     for field in data.fields:
         decision, rules = evaluate(db, owner.id, p.org.id, d, field)
-        f = RequestField(request_id=req.id, field=field, decision=decision, method='RULE', rules=rules)
+        f = RequestField(request_id=req.id, field=field, decision=decision,
+            method='AUTO_FETCH' if decision == 'APPROVED' else 'RULE', rules=rules)
         db.add(f)
         record_decision(db, f)
         fields.append(f)

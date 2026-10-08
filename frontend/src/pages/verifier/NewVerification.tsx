@@ -12,13 +12,6 @@ import {
 } from "../../components/common/UI";
 import { QrScanner } from "../../components/common/QrScanner";
 import type { VaultScanResult } from "../../components/common/QrScanner";
-interface Match {
-  id: string;
-  issuer: string;
-  issued_at: string;
-  version: number;
-  fields: string[];
-}
 export default function NewVerification() {
   const schemas = useResource<Record<string, Schema>>("/schemas"),
     { user } = useSession(),
@@ -272,8 +265,9 @@ export default function NewVerification() {
                 </div>
               </dl>
               <p>
-                The owner's rules may approve, deny or hold individual fields
-                for review.
+                If the owner has Auto fetch on for this document, permitted
+                fields are available immediately. Otherwise, the owner must
+                approve your request. Deny rules still apply.
               </p>
             </>
           )}

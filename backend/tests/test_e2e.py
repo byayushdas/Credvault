@@ -4,7 +4,7 @@ from sqlalchemy import select
 from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
 import pytest
-from conftest import request,rule
+from conftest import request,rule,auto_fetch
 from app.models import Credential,AuditLog,VerificationRequest
 from app.services.audit_service import check_chain
 from app.core.security import future
@@ -19,10 +19,10 @@ def test_complete_mixed_disclosure_and_isolation(workflow):
     started=time.perf_counter();r=request(v,d);elapsed=time.perf_counter()-started
     assert r.status_code==201,r.text
     req=r.json();assert req['status']=='PENDING'
-    assert {f['field']:f['decision'] for f in req['fields']}=={'degree':'APPROVED','universityId':'APPROVED','cgpa':'PENDING','rollNumber':'DENIED'}
+    assert {f['field']:f['decision'] for f in req['fields']}=={'degree':'PENDING','universityId':'PENDING','cgpa':'PENDING','rollNumber':'DENIED'}
     assert v.get('/api/v1/verification/requests/'+req['id']+'/result').status_code==409
     assert o.get('/api/v1/notifications').json()['unread']>=1
-    decide=o.post('/api/v1/verification/requests/'+req['id']+'/decide',json={'revision':req['revision'],'decisions':{'cgpa':'APPROVED'}})
+    decide=o.post('/api/v1/verification/requests/'+req['id']+'/decide',json={'revision':req['revision'],'decisions':{'degree':'APPROVED','universityId':'APPROVED','cgpa':'APPROVED'}})
     assert decide.status_code==200,decide.text
     assert decide.json()['status']=='PARTIAL'
     start=time.perf_counter();response=v.get('/api/v1/verification/requests/'+req['id']+'/result');result_elapsed=time.perf_counter()-start
@@ -79,11 +79,13 @@ def test_manual_denial_and_auto_approval(workflow):
     assert response.json()['status']=='DENIED'
     assert w['verifier'].get('/api/v1/verification/requests/'+r['id']+'/result').status_code==409
     assert rule(w['owner'],w['doc'],w['orgs'][3],'degree','AUTO_APPROVE').status_code==201
+    auto_fetch(w['owner'],w['doc'])
     r=request(w['verifier'],w['doc'],['degree']).json();assert r['status']=='APPROVED'
     assert w['verifier'].get('/api/v1/verification/requests/'+r['id']+'/result').status_code==200
 
 def test_consent_changes_do_not_reuse_broad_grants(workflow):
     w=workflow;rule(w['owner'],w['doc'],w['orgs'][3],'degree','AUTO_APPROVE')
+    auto_fetch(w['owner'],w['doc'])
     r=request(w['verifier'],w['doc'],['degree']).json()
     assert w['verifier'].get('/api/v1/verification/requests/'+r['id']+'/result').status_code==200
     assert rule(w['owner'],w['doc'],None,'degree','DENY').status_code==201
@@ -92,6 +94,7 @@ def test_consent_changes_do_not_reuse_broad_grants(workflow):
 
 def test_audit_failure_blocks_disclosure(workflow,monkeypatch):
     w=workflow;rule(w['owner'],w['doc'],w['orgs'][3],'degree','AUTO_APPROVE')
+    auto_fetch(w['owner'],w['doc'])
     r=request(w['verifier'],w['doc'],['degree']).json()
     def fail(*args,**kwargs):raise RuntimeError('Injected persistence failure')
     monkeypatch.setattr('app.routers.verification.audit',fail)
@@ -100,6 +103,7 @@ def test_audit_failure_blocks_disclosure(workflow,monkeypatch):
 
 def test_disclosure_and_revocation_are_serialized(workflow):
     w=workflow;rule(w['owner'],w['doc'],w['orgs'][3],'degree','AUTO_APPROVE')
+    auto_fetch(w['owner'],w['doc'])
     r=request(w['verifier'],w['doc'],['degree']).json()
     with ThreadPoolExecutor(2) as pool:
         a=pool.submit(w['verifier'].get,'/api/v1/verification/requests/'+r['id']+'/result')

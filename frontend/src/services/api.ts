@@ -11,6 +11,7 @@ export interface User {
 }
 export interface Doc {
   id: string;
+  auto_fetch: boolean;
   owner_id: string;
   title: string;
   type: string;

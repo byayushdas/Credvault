@@ -12,7 +12,7 @@ import {
 function OwnerVault() {
   const [vault, setVault] = useState("");
   useEffect(() => {
-    api("/vault/me", "GET").then((res) => {
+    api<{ success: boolean; data: { vault_id: string } }>("/vault/me", "GET").then((res) => {
       if (res.success && res.data) setVault(res.data.vault_id);
     });
   }, []);

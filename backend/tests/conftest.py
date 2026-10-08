@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 from app.database.database import Base, get_db, lock_transaction
 from app.main import app, attempts
-from app.models import Membership
+from app.models import Membership, now
 from scripts.seed_demo import seed, EMAILS
 PASSWORD='Test-only-password-2026!'
 @pytest.fixture
@@ -55,7 +55,7 @@ def env(tmp_path):
 def workflow(env):
     issuer=env['login'](2);owner=env['login'](0);verifier=env['login'](3)
     response=issuer.post('/api/v1/issuer/documents',headers={'Idempotency-Key':str(uuid.uuid4())},json={
-        'owner_id':env['ids'][0],'title':'Integration education','type':'DEGREE','issued_at':'2026-01-01',
+        'owner_id':env['ids'][0],'title':'Integration education','type':'DEGREE','issued_at':now(),
         'claims':{'degree':'PRIVATE-DEGREE-ALPHA','universityId':'PRIVATE-UNIVERSITY-A','cgpa':8.9,'rollNumber':'NEVER-SHARE-ROLL-9371'}})
     assert response.status_code==201,response.text
     return {**env,'issuer':issuer,'owner':owner,'verifier':verifier,'doc':response.json()}
@@ -65,3 +65,9 @@ def request(client,doc,fields=None,key=None,**overrides):
     return client.post('/api/v1/verification/requests',json=data,headers={'Idempotency-Key':key or str(uuid.uuid4())})
 def rule(client,doc,org,field,action,**overrides):
     return client.post('/api/v1/consent/rules',json={'credential_id':doc['id'],'verifier_id':org,'field':field,'action':action,**overrides})
+
+def auto_fetch(client, doc, enabled=True):
+    response = client.patch('/api/v1/documents/' + doc['id'] + '/auto-fetch', json={'auto_fetch': enabled})
+    assert response.status_code == 200, response.text
+    assert response.json()['auto_fetch'] is enabled
+    return response.json()

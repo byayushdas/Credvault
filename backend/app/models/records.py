@@ -1,7 +1,7 @@
 """Versioned model: prototype tables are preserved by an additive migration."""
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy import String, Text, Boolean, Integer, ForeignKey, JSON, UniqueConstraint, CheckConstraint
+from sqlalchemy import String, Text, Boolean, Integer, ForeignKey, JSON, UniqueConstraint, CheckConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column
 from ..database.database import Base
 
@@ -74,6 +74,7 @@ class Credential(Base):
     issued_at: Mapped[str] = mapped_column(String(40))
     expires_at: Mapped[str | None] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(24), default='VALID', index=True)
+    auto_fetch: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     version: Mapped[int] = mapped_column(Integer, default=1)
     replaces_id: Mapped[str | None] = mapped_column(ForeignKey('cv_credentials.id'))
     claims_encrypted: Mapped[str] = mapped_column(Text)

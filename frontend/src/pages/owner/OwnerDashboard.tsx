@@ -26,25 +26,12 @@ function VaultQRSection() {
   const action = useAction();
 
   useEffect(() => {
-    api("/vault/me/qr", "GET").then((res) => {
+    api<{ success: boolean; data: { vault_id: string; qr_payload: string } }>("/vault/me/qr", "GET").then((res) => {
       if (res.success && res.data) setQrData(res.data);
     });
   }, []);
 
   if (!qrData) return <Loading />;
-
-  const downloadQR = () => {
-    const svg = document.getElementById("vault-qr-svg");
-    if (!svg) return;
-    const svgData = new XMLSerializer().serializeToString(svg);
-    const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "credvault-qr.svg";
-    link.click();
-    URL.revokeObjectURL(url);
-  };
 
   const generateShareQr = async () => {
     const res = await api<{token: string, expires_at: string, qr_payload: string}>("/vault/me/share-token", "POST", {
@@ -165,8 +152,7 @@ export default function OwnerDashboard() {
   const { user } = useSession(),
     r = useResource<Dashboard>("/dashboard"),
     d = r.data,
-    root = "/" + user!.role.toLowerCase(),
-    action = useAction();
+    root = "/" + user!.role.toLowerCase();
   const owner = user!.role === "OWNER",
     issuer = user!.role === "ISSUER";
   return (

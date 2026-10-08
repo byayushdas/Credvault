@@ -1,5 +1,6 @@
 import pytest
-from app.models import Credential
+from conftest import auto_fetch
+from app.models import Credential, now
 from app.core.security import digest
 
 def test_scenario_1_issuer_issues_degree(env):
@@ -29,7 +30,7 @@ def test_scenario_1_issuer_issues_degree(env):
             "cgpa": 8.7,
             "rollNumber": "123456"
         },
-        "issued_at": "2026-01-01T00:00:00Z"
+        "issued_at": now()
     }, headers={'Idempotency-Key': 'key-issue-degree-1234'})
     assert res_issue.status_code == 201, res_issue.json()
     doc = res_issue.json()
@@ -64,6 +65,7 @@ def test_scenario_2_verifier_requests_approved_fields(env):
         "action": "AUTO_APPROVE"
     })
     assert res_rule2.status_code == 201
+    auto_fetch(owner, doc)
     
     # 2. Verifier scans owner QR and requests fields
     res_request = verifier.post('/api/v1/verification/requests/from-vault', json={
