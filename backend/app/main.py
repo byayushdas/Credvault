@@ -67,7 +67,7 @@ async def invalid(request, exc):
 
 @app.exception_handler(SQLAlchemyError)
 async def database_error(request, exc):
-    logging.getLogger('credvault').error('Database operation failed (%s)', type(exc).__name__)
+    logging.getLogger('credvault').error('Database operation failed: %s', str(exc))
     return JSONResponse({'detail':'The database operation could not be completed. Please retry.'}, status_code=503)
 
 @app.get('/health')

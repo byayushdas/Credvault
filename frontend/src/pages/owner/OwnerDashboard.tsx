@@ -12,17 +12,11 @@ import {
   Status,
   DateText,
   Empty,
-  useAction,
-  Modal,
+  useAction
 } from "../../components/common/UI";
 
 function VaultQRSection() {
   const [qrData, setQrData] = useState<{ vault_id: string; qr_payload: string } | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
-  const [shareModal, setShareModal] = useState(false);
-  const [shareDuration, setShareDuration] = useState(10);
-  const [shareVerifier, setShareVerifier] = useState("");
-  const [shareQr, setShareQr] = useState<{qr_payload: string, expires_at: string} | null>(null);
   const action = useAction();
 
   useEffect(() => {
@@ -33,118 +27,36 @@ function VaultQRSection() {
 
   if (!qrData) return <Loading />;
 
-  const generateShareQr = async () => {
-    const res = await api<{token: string, expires_at: string, qr_payload: string}>("/vault/me/share-token", "POST", {
-      expires_in_minutes: shareDuration,
-      verifier_id: shareVerifier || null
-    });
-    setShareQr(res);
-  };
-
-
   return (
     <section className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
       <h2>MY CREDVAULT</h2>
-      <p style={{ margin: "1rem 0" }}>
-        <small>Vault ID</small><br/>
-        <code className="reference" style={{ display: 'inline-block', marginTop: '0.5rem', wordBreak: 'break-all' }}>{qrData.vault_id}</code>
-      </p>
-
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'center', marginTop: '1rem' }}>
-        <button className="primary" onClick={() => setFullscreen(true)}>Show My QR</button>
-        <button className="secondary" onClick={() => setShareModal(true)}>Create Verification QR</button>
+      
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '1rem', background: 'white', borderRadius: '8px', marginTop: '1rem' }}>
+        <QRCodeSVG 
+          value={qrData.qr_payload} 
+          size={220} 
+          level="H" 
+          includeMargin={true}
+          fgColor="#0f172a"
+        />
+        
+        <code className="reference" style={{ marginTop: '1.5rem', fontSize: '1.1rem', wordBreak: 'break-all' }}>{qrData.vault_id}</code>
+        
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem', justifyContent: 'center' }}>
+          <button
+            className="secondary"
+            onClick={() => void action.run(async () => navigator.clipboard.writeText(qrData.vault_id), "Vault ID copied")}
+            disabled={action.busy}
+          >
+            Copy Vault ID
+          </button>
+        </div>
+        <div style={{ marginTop: "1.5rem", color: "#64748b", textAlign: "center", maxWidth: "300px" }}>
+          <p style={{ margin: "0.25rem 0" }}>Use this QR to identify your vault.</p>
+          <p style={{ margin: "0.25rem 0" }}>It does not automatically grant access to your documents.</p>
+        </div>
+        {action.feedback}
       </div>
-      
-      {fullscreen && (
-        <Modal title="My QR screen" onClose={() => setFullscreen(false)}>
-           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '2rem', background: 'white', borderRadius: '8px' }}>
-              <h3 style={{ marginBottom: "1.5rem", letterSpacing: "1px" }}>CREDVAULT</h3>
-              
-              <QRCodeSVG 
-                value={qrData.qr_payload} 
-                size={220} 
-                level="H" 
-                includeMargin={true}
-                fgColor="#0f172a"
-              />
-              
-              <code className="reference" style={{ marginTop: '1.5rem', fontSize: '1.1rem', wordBreak: 'break-all' }}>{qrData.vault_id}</code>
-              
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem', justifyContent: 'center' }}>
-                <button
-                  className="secondary"
-                  onClick={() => void action.run(async () => navigator.clipboard.writeText(qrData.vault_id), "Vault ID copied")}
-                  disabled={action.busy}
-                >
-                  Copy Vault ID
-                </button>
-                <button className="secondary" onClick={() => {
-                   const el = document.documentElement;
-                   if (el.requestFullscreen) {
-                     el.requestFullscreen();
-                   }
-                }}>
-                  Fullscreen
-                </button>
-              </div>
-              <div style={{ marginTop: "2rem", color: "#64748b", textAlign: "center", maxWidth: "300px" }}>
-                <p style={{ margin: "0.25rem 0" }}>Use this QR to identify your vault.</p>
-                <p style={{ margin: "0.25rem 0" }}>It does not automatically grant access to your documents.</p>
-              </div>
-              {action.feedback}
-           </div>
-        </Modal>
-      )}
-      
-      {shareModal && (
-        <Modal title="Create Verification QR" onClose={() => { setShareModal(false); setShareQr(null); }}>
-          {!shareQr ? (
-            <div className="form">
-              <p>Generate a temporary, single-use QR for verification.</p>
-              <label>
-                Expiration
-                <select value={shareDuration} onChange={e => setShareDuration(Number(e.target.value))}>
-                  <option value={10}>10 minutes</option>
-                  <option value={60}>1 hour</option>
-                  <option value={1440}>24 hours</option>
-                </select>
-              </label>
-              <label>
-                Restrict to Specific Verifier (Optional)
-                <input 
-                  placeholder="Verifier Organization ID" 
-                  value={shareVerifier} 
-                  onChange={e => setShareVerifier(e.target.value)} 
-                />
-              </label>
-              <button 
-                className="primary" 
-                onClick={() => void action.run(generateShareQr, "Created temporary QR")}
-                disabled={action.busy}
-              >
-                Generate QR
-              </button>
-              {action.feedback}
-            </div>
-          ) : (
-            <div style={{ textAlign: "center" }}>
-               <div style={{ display: 'flex', justifyContent: 'center', padding: '1rem', background: 'white', borderRadius: '8px' }}>
-                  <QRCodeSVG 
-                    value={shareQr.qr_payload} 
-                    size={250} 
-                    level="H" 
-                    includeMargin={true}
-                    fgColor="#0f172a"
-                  />
-               </div>
-               <p style={{ marginTop: "1rem" }}>
-                 <strong>Expires at:</strong> {new Date(shareQr.expires_at).toLocaleString()}
-               </p>
-               <button className="secondary" onClick={() => setShareQr(null)}>Create Another</button>
-            </div>
-          )}
-        </Modal>
-      )}
     </section>
   );
 }
